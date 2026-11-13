@@ -41,6 +41,7 @@ public final class GameView extends View {
     public static final int STATE_PLAY = 1;
     public static final int STATE_PAUSE = 2;
     public static final int STATE_GAME_OVER = 3;
+    public static final int STATE_SHOP = 4;
 
     // Design baseline: 640p virtual height (Retina 960x640 baseline)
     private static final float VIRTUAL_HEIGHT = 640f;
@@ -66,6 +67,40 @@ public final class GameView extends View {
     private final ArrayList<SeasonalItem> seasonItems = new ArrayList<>();
     private final ArrayList<Particle> particles = new ArrayList<>();
     private final ArrayList<ScorePopup> scorePopups = new ArrayList<>();
+    // Ambient Road Car Entity (bga2: blue van, red sedan, small compact)
+    private static final class AmbientCar {
+        float x;
+        int type;
+        float speed;
+        AmbientCar(float x, int type, float speed) {
+            this.x = x; this.type = type; this.speed = speed;
+        }
+    }
+
+    // Ambient Jumping Clownfish Entity (fish.png)
+    private static final class AmbientFish {
+        float x;
+        float timer = 0f;
+        float duration = 1.4f;
+        boolean active = false;
+        float nextJump = 1.5f;
+    }
+
+    // Ambient Sky Bird Entity (bird1 7 frames, bird2 8 frames)
+    private static final class AmbientBird {
+        float x, y;
+        float vx;
+        int type;
+        float flapTimer = 0f;
+        AmbientBird(float x, float y, float vx, int type) {
+            this.x = x; this.y = y; this.vx = vx; this.type = type;
+        }
+    }
+
+    private final ArrayList<AmbientCar> ambientCars = new ArrayList<>();
+    private final ArrayList<AmbientFish> ambientFish = new ArrayList<>();
+    private final ArrayList<AmbientBird> ambientBirds = new ArrayList<>();
+
 
     // Viewport & Motion
     private float W = 960f;
@@ -208,6 +243,16 @@ public final class GameView extends View {
         loadTypeface(context);
         loadArtwork(context);
         loadSounds(context);
+        ambientCars.add(new AmbientCar(80f, 0, 50f));
+        ambientCars.add(new AmbientCar(480f, 1, 70f));
+        ambientCars.add(new AmbientCar(880f, 2, 60f));
+
+        ambientFish.add(new AmbientFish());
+        ambientFish.add(new AmbientFish());
+
+        ambientBirds.add(new AmbientBird(150f, 100f, 65f, 0));
+        ambientBirds.add(new AmbientBird(650f, 160f, -55f, 1));
+
 
         if (musicEnabled) {
             startBgm();
@@ -510,6 +555,60 @@ public final class GameView extends View {
         c.drawBitmap(b, src, dst, paint);
     }
 
+    
+    private void blitHorizontalFrame(Canvas c, String key, int frameIndex, int totalFrames, float x, float y, float w, float h, float alpha) {
+        Bitmap b = sprites.get(key);
+        if (b == null) return;
+        paint.reset();
+        paint.setAntiAlias(true);
+        paint.setFilterBitmap(true);
+        if (alpha < 0.999f) {
+            paint.setAlpha((int) (clamp(alpha, 0f, 1f) * 255f));
+        }
+        int frameW = b.getWidth() / Math.max(1, totalFrames);
+        int left = frameIndex * frameW;
+        Rect src = new Rect(left, 0, left + frameW, b.getHeight());
+        RectF dst = new RectF(x, y, x + w, y + h);
+        c.drawBitmap(b, src, dst, paint);
+    }
+
+    private void drawCar(Canvas c, int carIndex, float x, float y) {
+        Bitmap bga2 = sprites.get("bga2");
+        if (bga2 == null) return;
+        paint.reset();
+        paint.setAntiAlias(true);
+        paint.setFilterBitmap(true);
+        Rect src;
+        float w, h = 42f;
+        if (carIndex == 0) {
+            src = new Rect(0, 0, 225, 85);
+            w = 110f;
+        } else if (carIndex == 1) {
+            src = new Rect(295, 0, 445, 85);
+            w = 75f;
+        } else {
+            src = new Rect(450, 0, 550, 85);
+            w = 50f;
+        }
+        RectF dst = new RectF(x, y - h, x + w, y);
+        c.drawBitmap(bga2, src, dst, paint);
+    }
+
+    private void drawJumpingFish(Canvas c, AmbientFish f) {
+        if (!f.active) return;
+        float progress = f.timer / f.duration;
+        float jumpHeight = 65f * (float) Math.sin(progress * Math.PI);
+        float curY = WATER_LEVEL - jumpHeight;
+        float curX = f.x - cameraX;
+
+        c.save();
+        c.translate(curX, curY);
+        float angle = (progress - 0.5f) * 80f;
+        c.rotate(angle);
+        blit(c, "fish", -20f, -20f, 40f, 40f, 1.0f);
+        c.restore();
+    }
+
     private void blit(Canvas c, String key, float x, float y, float w, float h, float alpha) {
         Bitmap b = sprites.get(key);
         if (b == null) return;
@@ -599,6 +698,47 @@ public final class GameView extends View {
                 (random.nextFloat() - 0.4f) * 50f, 40f + random.nextFloat() * 60f,
                 6.0f, 0xffffffff, 24f, key, (random.nextFloat() - 0.5f) * 120f
             ));
+        }
+
+        
+        // Update ambient road cars
+        for (AmbientCar car : ambientCars) {
+            car.x += car.speed * dt;
+            if (car.x > W + 200f) {
+                car.x = -150f;
+            }
+        }
+
+        // Update ambient jumping clownfish
+        for (AmbientFish f : ambientFish) {
+            if (!f.active) {
+                f.nextJump -= dt;
+                if (f.nextJump <= 0f) {
+                    f.active = true;
+                    f.timer = 0f;
+                    f.duration = 1.2f + random.nextFloat() * 0.4f;
+                    f.x = cameraX + 80f + random.nextFloat() * (W - 160f);
+                    f.nextJump = 3f + random.nextFloat() * 4f;
+                }
+            } else {
+                f.timer += dt;
+                if (f.timer >= f.duration) {
+                    f.active = false;
+                }
+            }
+        }
+
+        // Update ambient sky birds
+        for (AmbientBird b : ambientBirds) {
+            b.x += b.vx * dt;
+            b.flapTimer += dt;
+            if (b.vx > 0 && b.x > W + 150f) {
+                b.x = -120f;
+                b.y = 70f + random.nextFloat() * 120f;
+            } else if (b.vx < 0 && b.x < -150f) {
+                b.x = W + 120f;
+                b.y = 70f + random.nextFloat() * 120f;
+            }
         }
 
         if (state != STATE_PLAY) {
@@ -988,12 +1128,12 @@ public final class GameView extends View {
     private void drawScenery(Canvas c) {
         String key = seasonKey();
 
-        // Parallax Clouds
-        float cloudScroll = (cameraX * 0.18f) % 768f;
-        blit(c, key + "_cloud", -cloudScroll, 40f, 768f, 176f, 0.85f);
-        blit(c, key + "_cloud", -cloudScroll + 768f, 40f, 768f, 176f, 0.85f);
+        // Parallax Clouds (continuous smooth drifting)
+        float cloudScroll = (clock * 16f + cameraX * 0.18f) % 768f;
+        blit(c, key + "_cloud", -cloudScroll, 35f, 768f, 176f, 0.85f);
+        blit(c, key + "_cloud", -cloudScroll + 768f, 35f, 768f, 176f, 0.85f);
         if (W > 768f) {
-            blit(c, key + "_cloud", -cloudScroll + 1536f, 40f, 768f, 176f, 0.85f);
+            blit(c, key + "_cloud", -cloudScroll + 1536f, 35f, 768f, 176f, 0.85f);
         }
 
         // Parallax Mountains / Hills (bga3, bgb3, bgc3, bgd1)
@@ -1016,11 +1156,30 @@ public final class GameView extends View {
             }
         }
 
-        // River Surface Waves
+        // Animated Road Traffic (bga2 cars driving along road)
+        for (AmbientCar car : ambientCars) {
+            drawCar(c, car.type, car.x, WATER_LEVEL - 20f);
+        }
+
+        // River Surface Waves (continuous smooth rippling)
         String riverKey = (key.equals("bgc")) ? "bgc_river2" : (key + "_river");
-        float riverScroll = (cameraX * 0.85f + (float) Math.sin(clock * 3.5f) * 12f) % 480f;
+        float riverScroll = (clock * 38f + cameraX * 0.85f) % 480f;
         for (float rx = -riverScroll; rx < W + 480f; rx += 480f) {
             blit(c, riverKey, rx, WATER_LEVEL - 20f, 480f, 54f, 1.0f);
+        }
+
+        // Jumping Clownfish leaping out of river
+        for (AmbientFish f : ambientFish) {
+            drawJumpingFish(c, f);
+        }
+
+        // Ambient Sky Birds flapping across the sky
+        for (AmbientBird b : ambientBirds) {
+            int totalFrames = (b.type == 0) ? 7 : 8;
+            int frame = ((int) (b.flapTimer * 12f)) % totalFrames;
+            float bw = (b.type == 0) ? 76f : 84f;
+            float bh = (b.type == 0) ? 58f : 64f;
+            blitHorizontalFrame(c, (b.type == 0) ? "bird1" : "bird2", frame, totalFrames, b.x, b.y + (float) Math.sin(b.x * 0.02f) * 8f, bw, bh, 0.95f);
         }
 
         // Deep water fill
@@ -1093,10 +1252,12 @@ public final class GameView extends View {
 
             if (h.kind == 0) {
                 // Bird 1
-                blit(c, "bird1", hx - 38f, h.y - 28f, 76f, 56f, 1.0f);
+                int bFrame = ((int) (clock * 14f)) % 7;
+                blitHorizontalFrame(c, "bird1", bFrame, 7, hx - 38f, h.y - 28f, 76f, 56f, 1.0f);
             } else if (h.kind == 1) {
                 // Bird 2
-                blit(c, "bird2", hx - 42f, h.y - 32f, 84f, 64f, 1.0f);
+                int bFrame = ((int) (clock * 14f)) % 8;
+                blitHorizontalFrame(c, "bird2", bFrame, 8, hx - 42f, h.y - 32f, 84f, 64f, 1.0f);
             } else if (h.kind == 2) {
                 // Leaping Fish
                 c.save();
@@ -1339,22 +1500,23 @@ public final class GameView extends View {
     private void drawMenu(Canvas c) {
         float centerX = W * 0.5f;
 
-        // Authentic Title Logo (title_logo.png 670x470)
-        float logoW = Math.min(W * 0.68f, 500f);
-        float logoH = logoW * (470f / 670f);
-        float logoY = 30f + (float) Math.sin(clock * 2.5f) * 6f;
-        blit(c, "title_logo", centerX - logoW * 0.5f, logoY, logoW, logoH, 1.0f);
+        // Big Authentic PLAY Button (centered vertically at 48% height)
+        float pulse = 1.0f + (float) Math.sin(clock * 3.5f) * 0.035f;
+        float playW = 330f * pulse;
+        float playH = 172f * pulse;
+        float playX = centerX - playW * 0.5f;
+        float playY = VIRTUAL_HEIGHT * 0.46f - playH * 0.5f;
+        blit(c, "play", playX, playY, playW, playH, 1.0f);
 
-        // Big Authentic PLAY Button (play.png 412x214 with authentic shark font label)
-        float pulse = 1.0f + (float) Math.sin(clock * 3.5f) * 0.03f;
-        float playW = 320f * pulse;
-        float playH = 166f * pulse;
-        float playY = logoY + logoH - 15f;
-        blit(c, "play", centerX - playW * 0.5f, playY - (playH - 166f) * 0.5f, playW, playH, 1.0f);
+        // Authentic Title Logo (floating naturally right above PLAY)
+        float logoW = Math.min(W * 0.65f, 480f);
+        float logoH = logoW * (470f / 670f);
+        float logoY = playY - logoH + 20f + (float) Math.sin(clock * 2.5f) * 6f;
+        blit(c, "title_logo", centerX - logoW * 0.5f, logoY, logoW, logoH, 1.0f);
 
         // High Score Record using authentic BitmapNumber (num5)
         if (highScore > 0) {
-            float recordY = playY + playH + 10f;
+            float recordY = playY + playH + 12f;
             drawBitmapNumber(c, "num5", highScore, centerX, recordY, Paint.Align.CENTER);
         }
 
@@ -1368,6 +1530,43 @@ public final class GameView extends View {
         blit(c, "index_pack", W * 0.55f - 38f, footerY - 5f, 76f, 80f, 1.0f);
         blit(c, "sound", W * 0.75f - 60f, footerY + 8f, 120f, 60f, (soundEnabled && musicEnabled) ? 1.0f : 0.45f);
         blit(c, "index_signin", W * 0.90f - 65f, footerY + 8f, 130f, 60f, 0.95f);
+    }
+
+    // Authentic Backpack & Shop Modal (Trampoline, Hair, Kids Mode)
+    private void drawShop(Canvas c) {
+        paint.reset();
+        paint.setColor(0xcc000e1a);
+        c.drawRect(0, 0, W, VIRTUAL_HEIGHT, paint);
+
+        float centerX = W * 0.5f;
+
+        paint.reset();
+        paint.setAntiAlias(true);
+        paint.setColor(0xffffffff);
+        paint.setTextSize(34f);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTypeface(gameFont);
+        c.drawText("PAUL'S BACKPACK & SHOP", centerX, 70f, paint);
+
+        paint.setTextSize(22f);
+        paint.setColor(0xffffcc00);
+        c.drawText("Trampoline: Style " + (currentBoardStyle + 1) + " (Tap to change)", centerX, 150f, paint);
+        String lineKey = "board" + (currentBoardStyle + 1) + "_line";
+        blit(c, lineKey, centerX - 140f, 180f, 280f, 36f, 1.0f);
+        blit(c, "board_dot", centerX - 158f, 180f, 36f, 36f, 1.0f);
+        blit(c, "board_dot", centerX + 122f, 180f, 36f, 36f, 1.0f);
+
+        c.drawText("Hairstyle: " + (selectedHair == 0 ? "Default" : selectedHair == 1 ? "Afro" : selectedHair == 2 ? "Parted" : "Mochica") + " (Tap to change)", centerX, 275f, paint);
+        if (selectedHair > 0) {
+            blit(c, "hair" + selectedHair, centerX - 45f, 305f, 90f, 80f, 1.0f);
+        } else {
+            blit(c, "leaf", centerX - 25f, 320f, 50f, 50f, 1.0f);
+        }
+
+        blit(c, "scosun", centerX - 80f, 420f, 44f, 44f, 1.0f);
+        drawBitmapNumber(c, "num2", sunCount, centerX - 25f, 425f, Paint.Align.LEFT);
+
+        blit(c, "resume", centerX - 130f, 500f, 260f, 85f, 1.0f);
     }
 
     // Authentic Pause Screen (PauseView)
@@ -1460,6 +1659,8 @@ public final class GameView extends View {
 
         if (state == STATE_MENU) {
             drawMenu(canvas);
+        } else if (state == STATE_SHOP) {
+            drawShop(canvas);
         } else if (state == STATE_PAUSE) {
             drawPause(canvas);
         } else if (state == STATE_GAME_OVER) {
