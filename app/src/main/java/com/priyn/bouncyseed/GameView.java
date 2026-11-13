@@ -122,6 +122,7 @@ public final class GameView extends View {
 
     // Score & Progression
     private int state = STATE_MENU;
+    private int previousState = STATE_MENU;
     private int score = 0;
     private int displayScore = 0;
     private int sunCount = 0;
@@ -239,6 +240,7 @@ public final class GameView extends View {
         showTutorial = prefs.getBoolean("show_tutorial", true);
         selectedSkin = prefs.getInt("selected_skin", 0);
         selectedHair = prefs.getInt("selected_hair", 0);
+        currentBoardStyle = prefs.getInt("board_style", 0);
 
         loadTypeface(context);
         loadArtwork(context);
@@ -266,7 +268,11 @@ public final class GameView extends View {
             try {
                 return c.getAssets().openFd(path.replace('/', '\\'));
             } catch (Exception e2) {
-                return null;
+                try {
+                    return c.getAssets().openFd(path.replace('\\', '/'));
+                } catch (Exception e3) {
+                    return null;
+                }
             }
         }
     }
@@ -387,18 +393,22 @@ public final class GameView extends View {
                 "coin.ogg", "wings.ogg", "fly.ogg", "mega_jump.ogg",
                 "bird1.ogg", "bird2.ogg", "fish1.ogg", "fish2.ogg",
                 "bomb.ogg", "splash.ogg", "hop.ogg", "death.ogg", "gameover.ogg",
-                "score_tick.ogg", "score_finish.ogg", "icebreak.ogg"
+                "score_tick.ogg", "score_finish.ogg", "icebreak.ogg",
+                "bigger.ogg", "smaller.ogg", "thunder.ogg", "wind.ogg", "tiny_wings_item.ogg"
             };
 
+            int loadedCount = 0;
             for (String file : soundFiles) {
                 try {
                     AssetFileDescriptor afd = openFd(c, "original/ogg/" + file);
                     if (afd != null) {
                         int soundId = soundPool.load(afd, 1);
                         soundMap.put(file, soundId);
+                        loadedCount++;
                     }
                 } catch (Exception ignored) {}
             }
+            android.util.Log.i("BouncySeed", "Successfully loaded sounds: " + loadedCount + " / " + soundFiles.length);
         } catch (Exception ignored) {}
     }
 
@@ -483,6 +493,23 @@ public final class GameView extends View {
         if (l2 < 1e-4f) return dist(px, py, x1, y1);
         float t = clamp(((px - x1) * dx + (py - y1) * dy) / l2, 0f, 1f);
         return dist(px, py, x1 + t * dx, y1 + t * dy);
+    }
+
+    private static boolean segmentsIntersect(float x1, float y1, float x2, float y2,
+                                             float x3, float y3, float x4, float y4) {
+        float d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+        if (Math.abs(d) < 1e-4f) return false;
+        float t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / d;
+        float u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / d;
+        return t >= 0f && t <= 1f && u >= 0f && u <= 1f;
+    }
+
+    public RectF getPlayButtonBounds() {
+        float centerX = W * 0.5f;
+        float playW = 340f;
+        float playH = 175f;
+        float playY = VIRTUAL_HEIGHT * 0.46f - playH * 0.5f;
+        return new RectF(centerX - playW * 0.5f, playY, centerX + playW * 0.5f, playY + playH);
     }
 
     private int currentSeason() {
@@ -852,9 +879,10 @@ public final class GameView extends View {
         // 1. Trampoline collisions
         for (Trampoline t : trampolines) {
             if (t.life <= 0.1f) continue;
-            // Check collision with line segment
+            // Check collision with line segment and swept segment
             float dist = lineSegDist(seedX, seedY, t.ax, t.ay, t.bx, t.by);
-            if (dist < SEED_RADIUS + 10f && seedVy > -30f) {
+            boolean hit = (dist < SEED_RADIUS + 12f) || segmentsIntersect(oldSeedX, oldSeedY, seedX, seedY, t.ax, t.ay, t.bx, t.by);
+            if (hit && seedVy > -30f) {
                 // Compute line normal
                 float dx = t.bx - t.ax;
                 float dy = t.by - t.ay;
@@ -881,7 +909,14 @@ public final class GameView extends View {
 
                 seedVx = Math.max(180f, seedVx * 0.9f + nx * 140f);
                 seedVy = ny * bouncePower;
-                seedY = Math.min(seedY, Math.min(t.ay, t.by) - SEED_RADIUS);
+
+                // Position seed safely above trampoline line along normal
+                float l2 = dx * dx + dy * dy;
+                float tParam = clamp(((seedX - t.ax) * dx + (seedY - t.ay) * dy) / l2, 0f, 1f);
+                float closestX = t.ax + tParam * dx;
+                float closestY = t.ay + tParam * dy;
+                seedX = closestX + nx * (SEED_RADIUS + 4f);
+                seedY = closestY + ny * (SEED_RADIUS + 4f);
 
                 t.sagFactor = 1.0f;
                 bounceSquashTimer = 1.0f;
@@ -1068,7 +1103,8 @@ public final class GameView extends View {
     private void gameOver() {
         state = STATE_GAME_OVER;
         consecutiveBounces = 0;
-        playSfx("gameover.ogg", 0.9f);
+        pauseBgm();
+        playSfx("gameover.ogg", 0.95f);
         if (score > highScore) {
             highScore = score;
             prefs.edit().putInt("high_score", highScore).apply();
@@ -1103,6 +1139,9 @@ public final class GameView extends View {
         particles.clear();
         scorePopups.clear();
         spawnEntities();
+        if (musicEnabled) {
+            startBgm();
+        }
     }
 
     // Sky & Parallax Landscape
@@ -1489,10 +1528,30 @@ public final class GameView extends View {
         }
 
         // Beginner hint
-        if (showTutorial && introTime < 6.5f && state == STATE_PLAY) {
+        if (showTutorial && introTime < 5.5f && state == STATE_PLAY) {
             float bounceY = (float) Math.sin(clock * 5f) * 8f;
-            blit(c, "drawhere1", W * 0.5f - 130f, VIRTUAL_HEIGHT - 210f + bounceY, 260f, 68f, 0.95f);
-            blit(c, "hand", W * 0.5f - 35f, VIRTUAL_HEIGHT - 140f + bounceY, 70f, 96f, 0.95f);
+            float hintX = W * 0.5f;
+            float hintY = VIRTUAL_HEIGHT - 170f + bounceY;
+
+            paint.reset();
+            paint.setAntiAlias(true);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(5f);
+            paint.setColor(0xbbffffff);
+            paint.setPathEffect(new android.graphics.DashPathEffect(new float[]{16f, 12f}, 0f));
+            c.drawLine(hintX - 160f, hintY + 30f, hintX + 160f, hintY + 30f, paint);
+            paint.setPathEffect(null);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setTypeface(gameFont);
+            paint.setTextSize(26f);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setColor(0xffffffff);
+            paint.setShadowLayer(4f, 0, 2f, 0xdd000000);
+            c.drawText("DRAW A LINE TO BOUNCE!", hintX, hintY, paint);
+            paint.clearShadowLayer();
+
+            blit(c, "hand", hintX - 35f, hintY + 15f, 70f, 96f, 0.95f);
         }
     }
 
@@ -1501,22 +1560,23 @@ public final class GameView extends View {
         float centerX = W * 0.5f;
 
         // Big Authentic PLAY Button (centered vertically at 48% height)
+        RectF playBounds = getPlayButtonBounds();
         float pulse = 1.0f + (float) Math.sin(clock * 3.5f) * 0.035f;
-        float playW = 330f * pulse;
-        float playH = 172f * pulse;
-        float playX = centerX - playW * 0.5f;
-        float playY = VIRTUAL_HEIGHT * 0.46f - playH * 0.5f;
+        float playW = playBounds.width() * pulse;
+        float playH = playBounds.height() * pulse;
+        float playX = playBounds.centerX() - playW * 0.5f;
+        float playY = playBounds.centerY() - playH * 0.5f;
         blit(c, "play", playX, playY, playW, playH, 1.0f);
 
         // Authentic Title Logo (floating naturally right above PLAY)
         float logoW = Math.min(W * 0.65f, 480f);
         float logoH = logoW * (470f / 670f);
-        float logoY = playY - logoH + 20f + (float) Math.sin(clock * 2.5f) * 6f;
+        float logoY = playBounds.top - logoH + 20f + (float) Math.sin(clock * 2.5f) * 6f;
         blit(c, "title_logo", centerX - logoW * 0.5f, logoY, logoW, logoH, 1.0f);
 
         // High Score Record using authentic BitmapNumber (num5)
         if (highScore > 0) {
-            float recordY = playY + playH + 12f;
+            float recordY = playBounds.bottom + 12f;
             drawBitmapNumber(c, "num5", highScore, centerX, recordY, Paint.Align.CENTER);
         }
 
@@ -1681,8 +1741,12 @@ public final class GameView extends View {
     public void back() {
         if (state == STATE_PLAY) {
             state = STATE_PAUSE;
+            pauseBgm();
+        } else if (state == STATE_SHOP) {
+            state = previousState;
         } else if (state == STATE_PAUSE || state == STATE_GAME_OVER) {
             state = STATE_MENU;
+            if (musicEnabled) startBgm();
         }
     }
 
@@ -1723,14 +1787,11 @@ public final class GameView extends View {
         if (state == STATE_MENU) {
             if (action == MotionEvent.ACTION_DOWN) {
                 float centerX = W * 0.5f;
-                float logoW = Math.min(W * 0.68f, 500f);
-                float logoH = logoW * (470f / 670f);
-                float logoY = 30f;
-                float playY = logoY + logoH - 15f;
+                RectF playBounds = getPlayButtonBounds();
 
-                // 1. Tapping Play Button
-                if (touchX >= centerX - 180f && touchX <= centerX + 180f &&
-                    touchY >= playY && touchY <= playY + 180f) {
+                // 1. Tapping Play Button (with 25px generous touch padding)
+                if (touchX >= playBounds.left - 25f && touchX <= playBounds.right + 25f &&
+                    touchY >= playBounds.top - 25f && touchY <= playBounds.bottom + 25f) {
                     playSfx("bounce.ogg", 0.9f);
                     triggerHaptic(30);
                     resetGame();
@@ -1738,7 +1799,9 @@ public final class GameView extends View {
                 }
 
                 // 2. Tapping Seed character in logo cycles skins and hair
-                if (dist(touchX, touchY, centerX, logoY + logoH * 0.42f) < 85f) {
+                float logoH = Math.min(W * 0.65f, 480f) * (470f / 670f);
+                float logoY = playBounds.top - logoH + 20f;
+                if (dist(touchX, touchY, centerX, logoY + logoH * 0.45f) < 95f) {
                     selectedSkin = (selectedSkin + 1) % 4;
                     selectedHair = (selectedHair + 1) % 4;
                     prefs.edit().putInt("selected_skin", selectedSkin)
@@ -1748,10 +1811,11 @@ public final class GameView extends View {
                     return true;
                 }
 
-                // 3. Audio toggle on footer
                 float footerY = VIRTUAL_HEIGHT - 86f;
+
+                // 3. Audio toggle on footer
                 if (touchX >= W * 0.75f - 60f && touchX <= W * 0.75f + 60f &&
-                    touchY >= footerY) {
+                    touchY >= footerY - 10f) {
                     soundEnabled = !soundEnabled;
                     musicEnabled = soundEnabled;
                     prefs.edit().putBoolean("sound_on", soundEnabled)
@@ -1761,12 +1825,65 @@ public final class GameView extends View {
                     return true;
                 }
 
-                // 4. Style cycle via footer pack button
-                if (touchX >= W * 0.55f - 40f && touchX <= W * 0.55f + 40f &&
-                    touchY >= footerY) {
+                // 4. Backpack button on footer opens shop
+                if (touchX >= W * 0.55f - 48f && touchX <= W * 0.55f + 48f &&
+                    touchY >= footerY - 20f) {
+                    previousState = STATE_MENU;
+                    state = STATE_SHOP;
+                    playSfx("bounce.ogg", 0.8f);
+                    triggerHaptic(20);
+                    return true;
+                }
+
+                // 5. Rank / Leaderboard button on footer
+                if (touchX >= W * 0.35f - 48f && touchX <= W * 0.35f + 48f &&
+                    touchY >= footerY - 20f) {
+                    playSfx("hop.ogg", 0.85f);
+                    triggerHaptic(20);
+                    scorePopups.add(new ScorePopup(centerX, footerY - 45f, "RECORD: " + highScore, 0xffffdd44));
+                    return true;
+                }
+
+                // 6. About / Info button on footer
+                if (touchX >= W * 0.15f - 48f && touchX <= W * 0.15f + 48f &&
+                    touchY >= footerY - 20f) {
+                    playSfx("hop.ogg", 0.85f);
+                    triggerHaptic(20);
+                    scorePopups.add(new ScorePopup(centerX, footerY - 45f, "BOUNCY SEED REVIVAL v1.7.5", 0xffffffff));
+                    return true;
+                }
+            }
+            return true;
+        }
+
+        if (state == STATE_SHOP) {
+            if (action == MotionEvent.ACTION_DOWN) {
+                float centerX = W * 0.5f;
+
+                // 1. Trampoline Style selector
+                if (touchY >= 130f && touchY <= 240f) {
                     currentBoardStyle = (currentBoardStyle + 1) % 4;
-                    playSfx("bounce.ogg", 0.7f);
-                    triggerHaptic(15);
+                    prefs.edit().putInt("board_style", currentBoardStyle).apply();
+                    playSfx("bounce.ogg", 0.85f);
+                    triggerHaptic(20);
+                    return true;
+                }
+
+                // 2. Hairstyle selector
+                if (touchY >= 250f && touchY <= 380f) {
+                    selectedHair = (selectedHair + 1) % 4;
+                    prefs.edit().putInt("selected_hair", selectedHair).apply();
+                    playSfx("hop.ogg", 0.85f);
+                    triggerHaptic(20);
+                    return true;
+                }
+
+                // 3. Resume / Close button
+                if (touchX >= centerX - 160f && touchX <= centerX + 160f &&
+                    touchY >= 480f && touchY <= 600f) {
+                    playSfx("bounce.ogg", 0.8f);
+                    triggerHaptic(20);
+                    state = previousState;
                     return true;
                 }
             }
@@ -1779,15 +1896,16 @@ public final class GameView extends View {
 
                 // Resume
                 if (touchX >= centerX - 200f && touchX <= centerX + 200f &&
-                    touchY >= 180f && touchY <= 300f) {
+                    touchY >= 170f && touchY <= 300f) {
                     playSfx("bounce.ogg", 0.8f);
                     state = STATE_PLAY;
+                    resumeBgm();
                     return true;
                 }
 
                 // Audio toggle
                 if (touchX >= centerX - 70f && touchX <= centerX + 70f &&
-                    touchY >= 320f && touchY <= 380f) {
+                    touchY >= 310f && touchY <= 390f) {
                     soundEnabled = !soundEnabled;
                     musicEnabled = soundEnabled;
                     prefs.edit().putBoolean("sound_on", soundEnabled)
@@ -1798,15 +1916,16 @@ public final class GameView extends View {
 
                 // Retry
                 if (touchX >= centerX - 130f && touchX <= centerX + 130f &&
-                    touchY >= 400f && touchY <= 515f) {
+                    touchY >= 395f && touchY <= 515f) {
                     resetGame();
                     return true;
                 }
 
                 // Menu
                 if (touchX >= centerX - 130f && touchX <= centerX + 130f &&
-                    touchY >= 525f && touchY <= 630f) {
+                    touchY >= 520f && touchY <= 630f) {
                     state = STATE_MENU;
+                    if (musicEnabled) startBgm();
                     return true;
                 }
             }
@@ -1829,7 +1948,28 @@ public final class GameView extends View {
                 // Menu button
                 if (touchX >= centerX + 10f && touchX <= centerX + 160f &&
                     touchY >= 400f && touchY <= 550f) {
+                    playSfx("hop.ogg", 0.85f);
                     state = STATE_MENU;
+                    if (musicEnabled) startBgm();
+                    return true;
+                }
+
+                // Backpack button
+                if (touchX >= centerX + 120f && touchX <= centerX + 260f &&
+                    touchY >= 490f && touchY <= 620f) {
+                    previousState = STATE_GAME_OVER;
+                    state = STATE_SHOP;
+                    playSfx("bounce.ogg", 0.8f);
+                    triggerHaptic(20);
+                    return true;
+                }
+
+                // Rank button
+                if (touchX >= centerX - 270f && touchX <= centerX - 130f &&
+                    touchY >= 490f && touchY <= 620f) {
+                    playSfx("hop.ogg", 0.85f);
+                    triggerHaptic(20);
+                    scorePopups.add(new ScorePopup(centerX, 380f, "RECORD: " + highScore, 0xffffdd44));
                     return true;
                 }
             }
@@ -1838,9 +1978,11 @@ public final class GameView extends View {
 
         // In Gameplay: Drawing finger trampolines
         if (state == STATE_PLAY) {
-            // Check Pause button tap
-            if (action == MotionEvent.ACTION_DOWN && touchX >= W - 90f && touchY <= 80f) {
+            // Check Pause button tap (top-right corner)
+            if (action == MotionEvent.ACTION_DOWN && touchX >= W - 95f && touchY <= 85f) {
                 state = STATE_PAUSE;
+                pauseBgm();
+                playSfx("bounce.ogg", 0.7f);
                 return true;
             }
 
