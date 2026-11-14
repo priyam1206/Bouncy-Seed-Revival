@@ -22,6 +22,9 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.view.MotionEvent;
 import android.view.View;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -337,8 +340,8 @@ public final class GameView extends View {
         String[] keys = {
             "hero", "hero_bg", "hero_mike_bg", "hero_style1_bg", "hero_style2_bg", "hero_leaf",
             "hair1", "hair2", "hair3",
-            "bga0", "bgb0", "bgc0", "bgd0",
-            "rainbow", "item_shield", "item_rush", "item_x2", "item_balloon",
+            "bga0", "bga0_wide", "bgb0", "bgc0", "bgd0",
+            "rainbow", "rainbow_modern", "item_shield", "item_shield_modern", "item_rush", "item_x2", "item_balloon",
             "bga3", "bgb3", "bgc3", "bgd1", "bgd2",
             "bga_cloud", "bgb_cloud", "bgc_cloud", "bgd_cloud",
             "bga_river", "bgb_river", "bgc_river2", "bgd_river",
@@ -347,12 +350,12 @@ public final class GameView extends View {
             "board1_dot", "board2_dot", "board3_dot", "board4_dot",
             "board_dot", "board_dot_strong",
             "bird1", "bird2", "fish", "bomb", "bomb_effect",
-            "sun", "sun0001", "sun0002", "sun0003", "sun0004", "sun0005", "sun0006", "sun0007", "sun0008", "sun0009",
+            "sun", "sun_modern", "sun0001", "sun0002", "sun0003", "sun0004", "sun0005", "sun0006", "sun0007", "sun0008", "sun0009",
             "star", "star2", "coin", "flower", "leaf", "maple", "snow", "ice", "tear", "shield", "cover", "circle",
             "title_logo", "title_splash", "bga2", "bgc4", "shop",
-            "play", "index_play", "index_rank", "index_pack", "index_about", "index_mybo", "index_leaf", "index_signin", "index_signout",
+            "play", "play_modern", "index_play", "index_rank", "index_pack", "index_about", "index_mybo", "index_leaf", "index_signin", "index_signout",
             "footer", "hand", "drawhere1", "drawhere2", "drawhere3", "cannotdraw", "dont",
-            "gameover_bg1", "gameover_bg2", "gameover_bg3", "gameover_bg4",
+            "gameover_bg1", "gameover_bg2", "gameover_bg3", "gameover_bg4", "underwater_wide",
             "gameover_grass", "gameover_title", "gameover_sign", "gameover_retry", "gameover_menu", "gameover_rank", "gameover_pack",
             "pause", "resume", "retry", "menu", "sound", "top", "scosun", "oversun", "overcoin",
             "num1", "num2", "num3", "num4", "num5", "num6", "font1", "font3"
@@ -440,20 +443,59 @@ public final class GameView extends View {
     private void startBgm() {
         if (!musicEnabled) return;
         try {
+            if (bgmPlayer != null && bgmPlayer.isPlaying()) {
+                return;
+            }
             if (bgmPlayer == null) {
                 bgmPlayer = new MediaPlayer();
-                AssetFileDescriptor afd = openFd(getContext(), "original/ogg/gamebg.ogg");
-                if (afd != null) {
-                    bgmPlayer.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
-                    bgmPlayer.setLooping(true);
-                    bgmPlayer.setVolume(0.55f, 0.55f);
-                    bgmPlayer.prepare();
+                bgmPlayer.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build());
+
+                // 1. Try opening via cached file in getCacheDir() (100% reliable across all Android versions)
+                File cacheBgm = new File(getContext().getCacheDir(), "gamebg.ogg");
+                if (!cacheBgm.exists() || cacheBgm.length() < 1000) {
+                    try (InputStream in = openAsset(getContext(), "original/ogg/gamebg.ogg");
+                         FileOutputStream out = new FileOutputStream(cacheBgm)) {
+                        if (in != null) {
+                            byte[] buf = new byte[8192];
+                            int len;
+                            while ((len = in.read(buf)) > 0) {
+                                out.write(buf, 0, len);
+                            }
+                        }
+                    } catch (Exception e) {
+                        android.util.Log.w("BouncySeed", "Could not cache BGM: " + e);
+                    }
                 }
+
+                if (cacheBgm.exists() && cacheBgm.length() > 1000) {
+                    try (FileInputStream fis = new FileInputStream(cacheBgm)) {
+                        bgmPlayer.setDataSource(fis.getFD());
+                    }
+                } else {
+                    // Fallback to openFd
+                    AssetFileDescriptor afd = openFd(getContext(), "original/ogg/gamebg.ogg");
+                    if (afd != null) {
+                        bgmPlayer.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+                    }
+                }
+
+                bgmPlayer.setLooping(true);
+                bgmPlayer.setVolume(0.80f, 0.80f);
+                bgmPlayer.prepare();
+                android.util.Log.i("BouncySeed", "BGM MediaPlayer prepared successfully!");
             }
+            bgmPlayer.start();
+            android.util.Log.i("BouncySeed", "BGM playing: " + bgmPlayer.isPlaying());
+        } catch (Exception e) {
+            android.util.Log.e("BouncySeed", "Error starting BGM: " + e);
             if (bgmPlayer != null) {
-                bgmPlayer.start();
+                try { bgmPlayer.release(); } catch (Exception ignored) {}
+                bgmPlayer = null;
             }
-        } catch (Exception ignored) {}
+        }
     }
 
     public void pauseBgm() {
@@ -523,9 +565,9 @@ public final class GameView extends View {
 
     public RectF getPlayButtonBounds() {
         float centerX = W * 0.5f;
-        float playW = 340f;
-        float playH = 175f;
-        float playY = VIRTUAL_HEIGHT * 0.46f - playH * 0.5f;
+        float playW = 360f;
+        float playH = 165f;
+        float playY = 240f;
         return new RectF(centerX - playW * 0.5f, playY, centerX + playW * 0.5f, playY + playH);
     }
 
@@ -1385,16 +1427,30 @@ public final class GameView extends View {
             if (sx < -80f || sx > W + 80f) continue;
 
             if (s.type == 0) {
-                // Spinning Animated Sun
-                blit(c, sunKey, sx - 32f, s.y - 32f, 64f, 64f, 1.0f);
+                // Spinning Animated Sun with modern high-res glow
+                if (sprites.containsKey("sun_modern")) {
+                    float pulse = 1.0f + (float) Math.sin(clock * 6f + s.x * 0.1f) * 0.08f;
+                    float sw = 64f * pulse;
+                    blit(c, "sun_modern", sx - sw * 0.5f, s.y - sw * 0.5f, sw, sw, 1.0f);
+                } else {
+                    blit(c, sunKey, sx - 32f, s.y - 32f, 64f, 64f, 1.0f);
+                }
             } else if (s.type == 1) {
                 // Authentic Rainbow Arc Collectible
                 float bob = (float) Math.sin(clock * 4f + s.x * 0.05f) * 6f;
-                blit(c, "rainbow", sx - 38f, s.y - 38f + bob, 76f, 76f, 1.0f);
+                if (sprites.containsKey("rainbow_modern")) {
+                    blit(c, "rainbow_modern", sx - 42f, s.y - 32f + bob, 84f, 64f, 1.0f);
+                } else {
+                    blit(c, "rainbow", sx - 38f, s.y - 38f + bob, 76f, 76f, 1.0f);
+                }
             } else if (s.type == 2) {
                 // Authentic Shield Pickup
                 float bob = (float) Math.sin(clock * 3.5f + s.x * 0.05f) * 5f;
-                blit(c, "item_shield", sx - 35f, s.y - 35f + bob, 70f, 70f, 1.0f);
+                if (sprites.containsKey("item_shield_modern")) {
+                    blit(c, "item_shield_modern", sx - 35f, s.y - 35f + bob, 70f, 70f, 1.0f);
+                } else {
+                    blit(c, "item_shield", sx - 35f, s.y - 35f + bob, 70f, 70f, 1.0f);
+                }
             } else if (s.type == 3) {
                 // Gold Coin
                 blit(c, "coin", sx - 26f, s.y - 26f, 52f, 52f, 1.0f);
@@ -1668,8 +1724,12 @@ public final class GameView extends View {
 
     // In-Game HUD using Authentic Bitmap Numbers
     private void drawHud(Canvas c) {
-        // Sunlight Count: scosun.png + num2
-        blit(c, "scosun", 24f, 18f, 48f, 48f, 1.0f);
+        // Sunlight Count: sun_modern or scosun.png + num2
+        if (sprites.containsKey("sun_modern")) {
+            blit(c, "sun_modern", 20f, 14f, 52f, 52f, 1.0f);
+        } else {
+            blit(c, "scosun", 24f, 18f, 48f, 48f, 1.0f);
+        }
         drawBitmapNumber(c, "num2", sunCount, 82f, 20f, Paint.Align.LEFT);
 
         // Distance / Score: num1
@@ -1728,47 +1788,55 @@ public final class GameView extends View {
 
     // Authentic Start Menu Screen
     private void drawMenu(Canvas c) {
-        // Authentic full-bleed rolling hills background (bga0.png)
-        float bgW = Math.max(W, 960f);
-        float bgH = VIRTUAL_HEIGHT;
-        float bgX = (W - bgW) * 0.5f;
-        blit(c, "bga0", bgX, 0, bgW, bgH, 1.0f);
+        // Modern widescreen rolling hills background or authentic bga0
+        if (sprites.containsKey("bga0_wide")) {
+            blit(c, "bga0_wide", 0, 0, W, VIRTUAL_HEIGHT, 1.0f);
+        } else {
+            float bgW = Math.max(W, 960f);
+            float bgH = VIRTUAL_HEIGHT;
+            float bgX = (W - bgW) * 0.5f;
+            blit(c, "bga0", bgX, 0, bgW, bgH, 1.0f);
+        }
 
         float centerX = W * 0.5f;
-        float footerY = VIRTUAL_HEIGHT - 86f;
+        float footerY = VIRTUAL_HEIGHT - 67f;
 
         // Authentic cottages from bga3 atlas
         Bitmap bga3 = sprites.get("bga3");
         if (bga3 != null) {
-            // Left blue cottage (y=[532, 742], x=[6, 244])
-            Rect srcLeft = new Rect(6, 532, 244, 742);
-            RectF dstLeft = new RectF(15f, footerY - 185f, 15f + 210f, footerY - 5f);
+            // Left blue cottage (y=[532, 742], x=[5, 244])
+            Rect srcLeft = new Rect(5, 532, 244, 742);
+            RectF dstLeft = new RectF(0f, footerY - 250f, 290f, footerY + 6f);
             c.drawBitmap(bga3, srcLeft, dstLeft, paint);
 
             // Right red cottage (y=[52, 248], x=[3, 250])
             Rect srcRight = new Rect(3, 52, 250, 248);
-            RectF dstRight = new RectF(W - 225f, footerY - 175f, W - 15f, footerY - 5f);
+            RectF dstRight = new RectF(W - 310f, footerY - 245f, W, footerY + 6f);
             c.drawBitmap(bga3, srcRight, dstRight, paint);
         }
 
-        // Big Authentic PLAY Button (centered vertically at 46% height)
+        // Big Authentic PLAY Button (centered vertically)
         RectF playBounds = getPlayButtonBounds();
         float pulse = 1.0f + (float) Math.sin(clock * 3.5f) * 0.035f;
         float playW = playBounds.width() * pulse;
         float playH = playBounds.height() * pulse;
         float playX = playBounds.centerX() - playW * 0.5f;
         float playY = playBounds.centerY() - playH * 0.5f;
-        blit(c, "play", playX, playY, playW, playH, 1.0f);
 
-        // Authentic green sprout (index_leaf.png) attached to top-left curve of PLAY
-        float leafW = 84f, leafH = 82f;
-        float leafX = playX + playW * 0.16f - 30f;
-        float leafY = playY - 26f;
-        blit(c, "index_leaf", leafX, leafY, leafW, leafH, 1.0f);
+        if (sprites.containsKey("play_modern")) {
+            blit(c, "play_modern", playX, playY - 6f, playW, playH + 12f, 1.0f);
+        } else {
+            blit(c, "play", playX, playY, playW, playH, 1.0f);
+            // Authentic green sprout (index_leaf.png) attached to top-left curve of PLAY
+            float leafW = 96f, leafH = 74f;
+            float leafX = playX + 16f;
+            float leafY = playY - 36f;
+            blit(c, "index_leaf", leafX, leafY, leafW, leafH, 1.0f);
+        }
 
         // High Score Record using authentic BitmapNumber (num5)
         if (highScore > 0) {
-            float recordY = playBounds.bottom + 16f;
+            float recordY = playBounds.bottom + 22f;
             drawBitmapNumber(c, "num5", highScore, centerX, recordY, Paint.Align.CENTER);
         }
 
@@ -1776,11 +1844,11 @@ public final class GameView extends View {
         blitTile(c, "footer", 0, footerY, W, 86f);
 
         // Authentic Footer Buttons
-        blit(c, "index_about", W * 0.15f - 38f, footerY - 5f, 76f, 80f, 1.0f);
-        blit(c, "index_rank", W * 0.35f - 38f, footerY - 5f, 76f, 80f, 1.0f);
-        blit(c, "index_pack", W * 0.55f - 38f, footerY - 5f, 76f, 80f, 1.0f);
-        blit(c, "sound", W * 0.75f - 60f, footerY + 8f, 120f, 60f, (soundEnabled && musicEnabled) ? 1.0f : 0.45f);
-        blit(c, "index_signin", W * 0.90f - 65f, footerY + 8f, 130f, 60f, 0.95f);
+        blit(c, "index_about", 32f, footerY - 14f, 76f, 80f, 1.0f);
+        blit(c, "index_rank", 138f, footerY - 14f, 76f, 80f, 1.0f);
+        blit(c, "index_pack", 244f, footerY - 14f, 76f, 80f, 1.0f);
+        blit(c, "sound", W - 210f, footerY + 6f, 110f, 56f, (soundEnabled && musicEnabled) ? 1.0f : 0.45f);
+        blit(c, "index_signin", W - 95f, footerY + 6f, 120f, 56f, 0.95f);
     }
 
     // Authentic Backpack & Shop Modal (Trampoline, Hair, Kids Mode)
@@ -1837,11 +1905,15 @@ public final class GameView extends View {
 
     // Authentic Game Over Screen (GameOverView)
     private void drawGameOver(Canvas c) {
-        paint.reset();
-        // Full-bleed widescreen underwater linear gradient
-        paint.setShader(new LinearGradient(0, 0, 0, VIRTUAL_HEIGHT, 0xff2090cc, 0xff0e4668, Shader.TileMode.CLAMP));
-        c.drawRect(0, 0, W, VIRTUAL_HEIGHT, paint);
-        paint.setShader(null);
+        if (sprites.containsKey("underwater_wide")) {
+            blit(c, "underwater_wide", 0, 0, W, VIRTUAL_HEIGHT, 1.0f);
+        } else {
+            paint.reset();
+            // Full-bleed widescreen underwater linear gradient
+            paint.setShader(new LinearGradient(0, 0, 0, VIRTUAL_HEIGHT, 0xff2090cc, 0xff0e4668, Shader.TileMode.CLAMP));
+            c.drawRect(0, 0, W, VIRTUAL_HEIGHT, paint);
+            paint.setShader(null);
+        }
 
         int season = currentSeason();
         String goBg = "gameover_bg" + (season + 1);
@@ -1864,7 +1936,11 @@ public final class GameView extends View {
         drawBitmapNumber(c, "num1", displayScore, centerX, 235f, Paint.Align.CENTER);
 
         // Sun count & Best Record
-        blit(c, "oversun", centerX - 130f, 310f, 58f, 56f, 1.0f);
+        if (sprites.containsKey("sun_modern")) {
+            blit(c, "sun_modern", centerX - 130f, 308f, 56f, 56f, 1.0f);
+        } else {
+            blit(c, "oversun", centerX - 130f, 310f, 58f, 56f, 1.0f);
+        }
         drawBitmapNumber(c, "num2", sunCount, centerX - 65f, 320f, Paint.Align.LEFT);
 
         blit(c, "top", centerX + 30f, 312f, 52f, 50f, 1.0f);
@@ -2010,11 +2086,11 @@ public final class GameView extends View {
                     return true;
                 }
 
-                float footerY = VIRTUAL_HEIGHT - 86f;
+                float footerY = VIRTUAL_HEIGHT - 67f;
 
-                // 3. Audio toggle on footer
-                if (touchX >= W * 0.75f - 60f && touchX <= W * 0.75f + 60f &&
-                    touchY >= footerY - 10f) {
+                // 3. Audio toggle on footer (Sound button anchored on right: W - 210)
+                if (touchX >= W - 225f && touchX <= W - 100f &&
+                    touchY >= footerY - 15f) {
                     soundEnabled = !soundEnabled;
                     musicEnabled = soundEnabled;
                     prefs.edit().putBoolean("sound_on", soundEnabled)
@@ -2024,9 +2100,18 @@ public final class GameView extends View {
                     return true;
                 }
 
-                // 4. Backpack button on footer opens shop
-                if (touchX >= W * 0.55f - 48f && touchX <= W * 0.55f + 48f &&
-                    touchY >= footerY - 20f) {
+                // 4. Sign-in / Store button on footer (anchored far right: W - 95)
+                if (touchX >= W - 100f && touchX <= W + 15f &&
+                    touchY >= footerY - 15f) {
+                    playSfx("hop.ogg", 0.85f);
+                    triggerHaptic(15);
+                    scorePopups.add(new ScorePopup(centerX, footerY - 45f, "SIGN IN / CONNECTED", 0xffffffff));
+                    return true;
+                }
+
+                // 5. Backpack button on footer opens shop (left group 3: 244)
+                if (touchX >= 225f && touchX <= 335f &&
+                    touchY >= footerY - 25f) {
                     previousState = STATE_MENU;
                     state = STATE_SHOP;
                     playSfx("bounce.ogg", 0.8f);
@@ -2034,21 +2119,21 @@ public final class GameView extends View {
                     return true;
                 }
 
-                // 5. Rank / Leaderboard button on footer
-                if (touchX >= W * 0.35f - 48f && touchX <= W * 0.35f + 48f &&
-                    touchY >= footerY - 20f) {
+                // 6. Rank / Leaderboard button on footer (left group 2: 138)
+                if (touchX >= 120f && touchX <= 225f &&
+                    touchY >= footerY - 25f) {
                     playSfx("hop.ogg", 0.85f);
                     triggerHaptic(20);
                     scorePopups.add(new ScorePopup(centerX, footerY - 45f, "RECORD: " + highScore, 0xffffdd44));
                     return true;
                 }
 
-                // 6. About / Info button on footer
-                if (touchX >= W * 0.15f - 48f && touchX <= W * 0.15f + 48f &&
-                    touchY >= footerY - 20f) {
+                // 7. About / Info button on footer (left group 1: 32)
+                if (touchX >= 15f && touchX <= 120f &&
+                    touchY >= footerY - 25f) {
                     playSfx("hop.ogg", 0.85f);
                     triggerHaptic(20);
-                    scorePopups.add(new ScorePopup(centerX, footerY - 45f, "BOUNCY SEED REVIVAL v1.7.5", 0xffffffff));
+                    scorePopups.add(new ScorePopup(centerX, footerY - 45f, "BOUNCY SEED REVIVAL v1.7.6", 0xffffffff));
                     return true;
                 }
             }
