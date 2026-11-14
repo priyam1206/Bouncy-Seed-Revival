@@ -50,6 +50,8 @@ public final class GameView extends View {
     private static final float VIRTUAL_HEIGHT = 640f;
     private static final float SEED_RADIUS = 34f;
     private static final float WATER_LEVEL = 585f;
+    private static final float CLOUD_ALTITUDE = 190f;
+    private boolean seedStunned = false;
     private static final float GRAVITY = 720f;
 
     // Rainbow colors for power-up trail
@@ -203,8 +205,13 @@ public final class GameView extends View {
         float phase;
         float startY;
         boolean defeated = false;
+        boolean hasSpeedup = false; // Fast Forward ⏩ carried by Red Bird (bird1)
         Hazard(float px, float py, int k, float ph) {
             x = px; y = py; kind = k; phase = ph; startY = py;
+            if (k == 0) {
+                // 45% of Red Birds carry the Fast Forward ⏩ speedup icon in their talons
+                hasSpeedup = (Math.random() < 0.45);
+            }
         }
     }
 
@@ -352,7 +359,7 @@ public final class GameView extends View {
             "bga_land", "bgb_land", "bgc_land", "bgd_land",
             "board1_line", "board2_line", "board3_line", "board4_line",
             "board1_dot", "board2_dot", "board3_dot", "board4_dot",
-            "board_dot", "board_dot_strong",
+            "board_dot", "board_dot_strong", "line3", "item_speedup",
             "bird1", "bird2", "fish", "bomb", "bomb_effect",
             "sun", "sun0001", "sun0002", "sun0003", "sun0004", "sun0005", "sun0006", "sun0007", "sun0008", "sun0009",
             "star", "star2", "coin", "flower", "leaf", "maple", "snow", "ice", "tear", "shield", "cover", "circle",
@@ -616,15 +623,12 @@ public final class GameView extends View {
         paint.setAntiAlias(true);
         paint.setFilterBitmap(true);
 
-        Rect src = new Rect();
-        RectF dst = new RectF();
-
         for (int i = 0; i < s.length(); i++) {
             int d = s.charAt(i) - '0';
             if (d < 0 || d > 9) d = 0;
-            src.set((int) (d * digitW), 0, (int) ((d + 1) * digitW), (int) digitH);
-            dst.set(curX, y, curX + digitW, y + digitH);
-            c.drawBitmap(bmp, src, dst, paint);
+            srcRect.set((int) (d * digitW), 0, (int) ((d + 1) * digitW), (int) digitH);
+            dstRect.set(curX, y, curX + digitW, y + digitH);
+            c.drawBitmap(bmp, srcRect, dstRect, paint);
             curX += digitW;
         }
     }
@@ -730,6 +734,12 @@ public final class GameView extends View {
         if (farthestPickup < 500f && sunlights.isEmpty()) {
             // Guaranteed early authentic rainbow collectible for testing and thrill!
             sunlights.add(new Sunlight(360f, 210f, 1));
+        }
+        if (farthestHazard < 600f && hazards.isEmpty()) {
+            // Guaranteed early Red Bird carrying Fast-Forward ⏩ Speedup icon!
+            Hazard earlyBird = new Hazard(440f, 220f, 0, 0f);
+            earlyBird.hasSpeedup = true;
+            hazards.add(earlyBird);
         }
 
         // Collectibles (Sun, Coins, Rainbow, Shield, Double Star)
@@ -977,6 +987,18 @@ public final class GameView extends View {
             Trampoline t = itTramp.next();
             if (t.broken || t.life <= 0.1f) continue;
             // Check collision with line segment and swept segment
+            if (seedStunned) {
+                // While stunned by black bird, seed cannot jump on trampolines!
+                // Plummets straight through any trampoline in its path
+                float dist = lineSegDist(seedX, seedY, t.ax, t.ay, t.bx, t.by);
+                if (dist < SEED_RADIUS + 16f) {
+                    t.broken = true;
+                    playSfx("icebreak.ogg", 0.75f);
+                    itTramp.remove();
+                }
+                continue;
+            }
+
             float dist = lineSegDist(seedX, seedY, t.ax, t.ay, t.bx, t.by);
             boolean hit = (dist < SEED_RADIUS + 12f) || segmentsIntersect(oldSeedX, oldSeedY, seedX, seedY, t.ax, t.ay, t.bx, t.by);
             if (hit && seedVy > -30f) {
@@ -986,9 +1008,9 @@ public final class GameView extends View {
                 float len = (float) Math.hypot(dx, dy);
                 if (len < 1f) continue;
 
-                // Check for LINE BREAKAGE on overstretched lines:
-                // If length > 420f OR (length > 340f and falling fast seedVy > 520f)
-                boolean breaks = (t.length > 420f) || (t.length > 340f && seedVy > 520f);
+                // Overstretched Trampoline Physics (No clamp on length):
+                // If length > 420f, the line breaks, BUT absorbs downward velocity and grants a weak rebound!
+                boolean breaks = (t.length > 420f);
                 if (breaks) {
                     t.broken = true;
                     playSfx("icebreak.ogg", 1.0f);
@@ -1008,8 +1030,11 @@ public final class GameView extends View {
                         ));
                     }
 
-                    // Line snaps! Seed plunges downward through the break!
-                    scorePopups.add(new ScorePopup(seedX - cameraX, seedY - 30f, "LINE BROKE!", 0xffff3333));
+                    android.util.Log.i("BouncySeedPhysics", "OVERSTRETCHED_BREAK len:" + t.length + " absorbed downward vy, granting weak jump -220f");
+                    // Authentic physics: Absorbs downward velocity and gives a weak jump!
+                    seedVy = -220f; // weak rebound (normal trampoline is -700f to -880f)
+                    seedVx = Math.max(160f, seedVx * 0.65f); // horizontal velocity dampened
+                    seedRotation = 180f;
                     consecutiveBounces = 0;
                     itTramp.remove();
                     break;
@@ -1161,18 +1186,51 @@ public final class GameView extends View {
                     continue;
                 }
 
-                // If seed hits bird from above, hop bounce on bird!
-                if ((h.kind == 0 || h.kind == 1) && seedVy > 40f && seedY < h.y) {
+                // Bird 1 (Red Bird) Mechanics:
+                if (h.kind == 0) {
                     h.defeated = true;
-                    seedVy = -540f;
-                    playSfx("hop.ogg", 0.9f);
-                    emitBounceStars(h.x, h.y);
-                    score += 150;
-                    scorePopups.add(new ScorePopup(h.x - cameraX, h.y, "+150 HOP!", 0xffaaff44));
+                    if (h.hasSpeedup) {
+                        android.util.Log.i("BouncySeedPhysics", "RED_BIRD_SPEEDUP_HIT -> RAINBOW_RUSH triggered!");
+                        // Colliding with Red Bird carrying ⏩ activates Rainbow Rush!
+                        rainbowExpires = clock + 6.0f;
+                        seedVy = -60f;
+                        seedVx = 780f;
+                        playSfx("wings.ogg", 1.0f);
+                        playSfx("sfx_sun_4.ogg", 1.0f);
+                        emitBounceStars(h.x, h.y);
+                        score += 300;
+                        scorePopups.add(new ScorePopup(h.x - cameraX, h.y - 20f, "RAINBOW RUSH!", 0xffff44aa));
+                    } else {
+                        android.util.Log.i("BouncySeedPhysics", "RED_BIRD_FRIENDLY_HIT -> Hop boost!");
+                        // Red bird doesn't hurt seed! Friendly kick / hop!
+                        playSfx("bird1.ogg", 0.85f);
+                        playSfx("hop.ogg", 0.8f);
+                        seedVy = -480f; // Friendly hop boost
+                        seedVx = Math.max(260f, seedVx * 1.05f);
+                        emitBounceStars(h.x, h.y);
+                        score += 100;
+                        scorePopups.add(new ScorePopup(h.x - cameraX, h.y - 20f, "+100", 0xffffffff));
+                    }
                     continue;
                 }
 
-                // Lethal collision
+                // Bird 2 (Black Bird) Mechanics:
+                if (h.kind == 1) {
+                    android.util.Log.i("BouncySeedPhysics", "BLACK_BIRD_PREDATOR_HIT -> SEED_STUNNED plummet!");
+                    // Hostile predator bird: knocks seed into stunned fall!
+                    seedStunned = true;
+                    h.defeated = true;
+                    playSfx("bird2.ogg", 1.0f);
+                    playSfx("death.ogg", 0.85f);
+                    seedVy = Math.max(seedVy + 180f, 260f); // plummet downward
+                    seedVx = Math.max(60f, seedVx * 0.45f); // killed speed
+                    triggerHaptic(45);
+                    consecutiveBounces = 0;
+                    scorePopups.add(new ScorePopup(seedX - cameraX, seedY - 20f, "STUNNED!", 0xffff3333));
+                    continue;
+                }
+
+                // Lethal collision (Bomb)
                 if (h.kind == 3) {
                     playSfx("bomb.ogg", 1.0f);
                     triggerBombExplosion(h.x, h.y);
@@ -1277,6 +1335,7 @@ public final class GameView extends View {
         introTime = 0f;
         cameraX = 0f;
         seedX = 170f; seedY = 220f;
+        seedStunned = false;
         seedVx = 240f; seedVy = -90f;
         oldSeedX = seedX; oldSeedY = seedY;
         seedRotation = 0f;
@@ -1454,9 +1513,13 @@ public final class GameView extends View {
             if (hx < -100f || hx > W + 100f) continue;
 
             if (h.kind == 0) {
-                // Bird 1
+                // Bird 1 (Red Bird)
                 int bFrame = ((int) (clock * 14f)) % 7;
                 blitHorizontalFrame(c, "bird1", bFrame, 7, hx - 38f, h.y - 28f, 76f, 56f, 1.0f);
+                // Render fast forward ⏩ icon in talons if carrying Speedup
+                if (h.hasSpeedup) {
+                    blit(c, "item_speedup", hx - 16f, h.y + 10f, 32f, 32f, 1.0f);
+                }
             } else if (h.kind == 1) {
                 // Bird 2
                 int bFrame = ((int) (clock * 14f)) % 8;
@@ -1602,7 +1665,7 @@ public final class GameView extends View {
                 frame = 48; // Screaming panic drop
             } else if (rainbowExpires > clock) {
                 frame = 18; // Ecstatic flight
-            } else if (state == STATE_GAME_OVER) {
+            } else if (seedStunned || state == STATE_GAME_OVER) {
                 frame = 60; // Knocked out dizzy
             }
 
@@ -1658,6 +1721,8 @@ public final class GameView extends View {
         float y2 = gestureEndY;
 
         float len = dist(x1, y1, x2, y2);
+        boolean isAboveClouds = (y1 <= CLOUD_ALTITUDE || y2 <= CLOUD_ALTITUDE);
+
         if (len < 32f) {
             // Below minLineLength: show cannotdraw indicator
             blit(c, "cannotdraw", (x1 + x2) * 0.5f - 110f, (y1 + y2) * 0.5f - 40f, 220f, 32f, 0.85f);
@@ -1667,14 +1732,15 @@ public final class GameView extends View {
         float dx = x2 - x1, dy = y2 - y1;
         float angle = (float) Math.toDegrees(Math.atan2(dy, dx));
 
-        boolean isStrong = (len <= 150f);
-        boolean isWarning = (len > 420f);
+        boolean isStrong = (len <= 150f && !isAboveClouds);
+        boolean isWarning = (len > 420f || isAboveClouds);
 
         c.save();
         c.translate(x1, y1);
         c.rotate(angle);
-        String lineKey = "board" + (currentBoardStyle + 1) + "_line";
-        float alpha = isWarning ? (0.6f + (float) Math.sin(clock * 16f) * 0.35f) : 0.88f;
+        // When drawn above/in clouds, trampoline texture becomes line3 (black & yellow diagonal hazard stripes)
+        String lineKey = isAboveClouds ? "line3" : ("board" + (currentBoardStyle + 1) + "_line");
+        float alpha = isWarning ? (0.68f + (float) Math.sin(clock * 16f) * 0.28f) : 0.90f;
         blit(c, lineKey, 0, -18f, len, 36f, alpha);
         c.restore();
 
@@ -1685,26 +1751,11 @@ public final class GameView extends View {
         blit(c, dotKey, x1 - dotOff, y1 - dotOff, dotSize, dotSize, 0.95f);
         blit(c, dotKey, x2 - dotOff, y2 - dotOff, dotSize, dotSize, 0.95f);
 
-        // Visual feedback hints
-        paint.reset();
-        paint.setAntiAlias(true);
-        paint.setTypeface(gameFont);
-        paint.setTextAlign(Paint.Align.CENTER);
-        float midX = (x1 + x2) * 0.5f;
-        float midY = (y1 + y2) * 0.5f - 24f;
-
-        if (isStrong) {
-            paint.setTextSize(20f);
-            paint.setColor(0xffffdd33);
-            paint.setShadowLayer(4f, 0, 2f, 0xbb000000);
-            c.drawText("SUPER BOUNCE!", midX, midY, paint);
-            paint.clearShadowLayer();
-        } else if (isWarning) {
-            paint.setTextSize(20f);
-            paint.setColor(0xffff3333);
-            paint.setShadowLayer(4f, 0, 2f, 0xbb000000);
-            c.drawText("OVERSTRETCHED - MAY BREAK!", midX, midY, paint);
-            paint.clearShadowLayer();
+        // Above clouds: display authentic cannotdraw.png warning banner centered over line
+        if (isAboveClouds) {
+            float midX = (x1 + x2) * 0.5f;
+            float midY = (y1 + y2) * 0.5f - 30f;
+            blit(c, "cannotdraw", midX - 140f, midY - 20f, 280f, 40f, 0.95f);
         }
     }
 
@@ -2010,15 +2061,9 @@ public final class GameView extends View {
     }
 
     private void updateGestureEnd(float screenX, float screenY) {
-        float dx = screenX - gestureStartX;
-        float dy = screenY - gestureStartY;
-        float len = (float) Math.hypot(dx, dy);
-        if (len > 540f) {
-            dx = dx * 540f / len;
-            dy = dy * 540f / len;
-        }
-        gestureEndX = gestureStartX + dx;
-        gestureEndY = gestureStartY + dy;
+        // Original game allows drawing trampoline of any length across full screen
+        gestureEndX = screenX;
+        gestureEndY = screenY;
     }
 
     @Override
@@ -2028,6 +2073,9 @@ public final class GameView extends View {
         float worldX = touchX + cameraX;
 
         int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            android.util.Log.i("BouncySeedTouch", "TOUCH_DOWN raw:(" + event.getX() + ", " + event.getY() + ") scaled:(" + touchX + ", " + touchY + ") scale:" + scale + " W:" + W + " state:" + state + " play:" + getPlayButtonBounds());
+        }
 
         if (state == STATE_MENU) {
             if (action == MotionEvent.ACTION_DOWN) {
@@ -2261,7 +2309,14 @@ public final class GameView extends View {
                         dragging = false;
                         updateGestureEnd(touchX, touchY);
                         float len = dist(gestureStartX, gestureStartY, gestureEndX, gestureEndY);
-                        if (len >= 32f) {
+                        boolean isAboveClouds = (gestureStartY <= CLOUD_ALTITUDE || gestureEndY <= CLOUD_ALTITUDE);
+
+                        if (isAboveClouds) {
+                            android.util.Log.i("BouncySeedPhysics", "ABOVE_CLOUDS_REJECTED startY:" + gestureStartY + " endY:" + gestureEndY + " cloudAlt:" + CLOUD_ALTITUDE);
+                            // Cannot draw above clouds: canceled!
+                            playSfx("bomb.ogg", 0.25f);
+                            triggerHaptic(20);
+                        } else if (len >= 32f) {
                             // Convert screen-space line coordinates to world coordinates at moment of release
                             float x1 = gestureStartX + cameraX;
                             float y1 = gestureStartY;
