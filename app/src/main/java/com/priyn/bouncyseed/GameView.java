@@ -58,6 +58,10 @@ public final class GameView extends View {
     };
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final Rect srcRect = new Rect();
+    private final RectF dstRect = new RectF();
+    private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final Paint alphaPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final HashMap<String, Bitmap> sprites = new HashMap<>();
     private final SharedPreferences prefs;
     private final Random random = new Random(540213);
@@ -341,7 +345,7 @@ public final class GameView extends View {
             "hero", "hero_bg", "hero_mike_bg", "hero_style1_bg", "hero_style2_bg", "hero_leaf",
             "hair1", "hair2", "hair3",
             "bga0", "bga0_wide", "bgb0", "bgc0", "bgd0",
-            "rainbow", "rainbow_modern", "item_shield", "item_shield_modern", "item_rush", "item_x2", "item_balloon",
+            "rainbow", "item_shield", "item_rush", "item_x2", "item_balloon",
             "bga3", "bgb3", "bgc3", "bgd1", "bgd2",
             "bga_cloud", "bgb_cloud", "bgc_cloud", "bgd_cloud",
             "bga_river", "bgb_river", "bgc_river2", "bgd_river",
@@ -350,12 +354,12 @@ public final class GameView extends View {
             "board1_dot", "board2_dot", "board3_dot", "board4_dot",
             "board_dot", "board_dot_strong",
             "bird1", "bird2", "fish", "bomb", "bomb_effect",
-            "sun", "sun_modern", "sun0001", "sun0002", "sun0003", "sun0004", "sun0005", "sun0006", "sun0007", "sun0008", "sun0009",
+            "sun", "sun0001", "sun0002", "sun0003", "sun0004", "sun0005", "sun0006", "sun0007", "sun0008", "sun0009",
             "star", "star2", "coin", "flower", "leaf", "maple", "snow", "ice", "tear", "shield", "cover", "circle",
-            "title_logo", "title_splash", "bga2", "bgc4", "shop",
-            "play", "play_modern", "index_play", "index_rank", "index_pack", "index_about", "index_mybo", "index_leaf", "index_signin", "index_signout",
+            "title_logo", "bga2", "bgc4", "shop",
+            "play", "index_play", "index_rank", "index_pack", "index_about", "index_mybo", "index_leaf", "index_signin", "index_signout",
             "footer", "hand", "drawhere1", "drawhere2", "drawhere3", "cannotdraw", "dont",
-            "gameover_bg1", "gameover_bg2", "gameover_bg3", "gameover_bg4", "underwater_wide",
+            "gameover_bg1", "gameover_bg2", "gameover_bg3", "gameover_bg4",
             "gameover_grass", "gameover_title", "gameover_sign", "gameover_retry", "gameover_menu", "gameover_rank", "gameover_pack",
             "pause", "resume", "retry", "menu", "sound", "top", "scosun", "oversun", "overcoin",
             "num1", "num2", "num3", "num4", "num5", "num6", "font1", "font3"
@@ -628,56 +632,49 @@ public final class GameView extends View {
     private void blitFrame(Canvas c, String key, int frameIndex, int totalFrames, float x, float y, float w, float h, float alpha) {
         Bitmap b = sprites.get(key);
         if (b == null) return;
-        paint.reset();
-        paint.setAntiAlias(true);
-        paint.setFilterBitmap(true);
+        Paint p = bitmapPaint;
         if (alpha < 0.999f) {
-            paint.setAlpha((int) (clamp(alpha, 0f, 1f) * 255f));
+            alphaPaint.setAlpha((int) (clamp(alpha, 0f, 1f) * 255f));
+            p = alphaPaint;
         }
         int frameH = b.getHeight() / Math.max(1, totalFrames);
         int top = frameIndex * frameH;
-        Rect src = new Rect(0, top, b.getWidth(), top + frameH);
-        RectF dst = new RectF(x, y, x + w, y + h);
-        c.drawBitmap(b, src, dst, paint);
+        srcRect.set(0, top, b.getWidth(), top + frameH);
+        dstRect.set(x, y, x + w, y + h);
+        c.drawBitmap(b, srcRect, dstRect, p);
     }
 
-    
     private void blitHorizontalFrame(Canvas c, String key, int frameIndex, int totalFrames, float x, float y, float w, float h, float alpha) {
         Bitmap b = sprites.get(key);
         if (b == null) return;
-        paint.reset();
-        paint.setAntiAlias(true);
-        paint.setFilterBitmap(true);
+        Paint p = bitmapPaint;
         if (alpha < 0.999f) {
-            paint.setAlpha((int) (clamp(alpha, 0f, 1f) * 255f));
+            alphaPaint.setAlpha((int) (clamp(alpha, 0f, 1f) * 255f));
+            p = alphaPaint;
         }
         int frameW = b.getWidth() / Math.max(1, totalFrames);
         int left = frameIndex * frameW;
-        Rect src = new Rect(left, 0, left + frameW, b.getHeight());
-        RectF dst = new RectF(x, y, x + w, y + h);
-        c.drawBitmap(b, src, dst, paint);
+        srcRect.set(left, 0, left + frameW, b.getHeight());
+        dstRect.set(x, y, x + w, y + h);
+        c.drawBitmap(b, srcRect, dstRect, p);
     }
 
     private void drawCar(Canvas c, int carIndex, float x, float y) {
         Bitmap bga2 = sprites.get("bga2");
         if (bga2 == null) return;
-        paint.reset();
-        paint.setAntiAlias(true);
-        paint.setFilterBitmap(true);
-        Rect src;
         float w, h = 42f;
         if (carIndex == 0) {
-            src = new Rect(0, 0, 225, 85);
+            srcRect.set(0, 0, 225, 85);
             w = 110f;
         } else if (carIndex == 1) {
-            src = new Rect(295, 0, 445, 85);
+            srcRect.set(295, 0, 445, 85);
             w = 75f;
         } else {
-            src = new Rect(450, 0, 550, 85);
+            srcRect.set(450, 0, 550, 85);
             w = 50f;
         }
-        RectF dst = new RectF(x, y - h, x + w, y);
-        c.drawBitmap(bga2, src, dst, paint);
+        dstRect.set(x, y - h, x + w, y);
+        c.drawBitmap(bga2, srcRect, dstRect, bitmapPaint);
     }
 
     private void drawJumpingFish(Canvas c, AmbientFish f) {
@@ -695,35 +692,36 @@ public final class GameView extends View {
         c.restore();
     }
 
+    // High performance zero-allocation blit
+    private void blit(Canvas c, String key, float x, float y, float w, float h) {
+        blit(c, key, x, y, w, h, 1.0f);
+    }
+
     private void blit(Canvas c, String key, float x, float y, float w, float h, float alpha) {
         Bitmap b = sprites.get(key);
         if (b == null) return;
-        paint.reset();
-        paint.setAntiAlias(true);
-        paint.setFilterBitmap(true);
+        Paint p = bitmapPaint;
         if (alpha < 0.999f) {
-            paint.setAlpha((int) (clamp(alpha, 0f, 1f) * 255f));
+            alphaPaint.setAlpha((int) (clamp(alpha, 0f, 1f) * 255f));
+            p = alphaPaint;
         }
-        Rect src = new Rect(0, 0, b.getWidth(), b.getHeight());
-        RectF dst = new RectF(x, y, x + w, y + h);
-        c.drawBitmap(b, src, dst, paint);
+        srcRect.set(0, 0, b.getWidth(), b.getHeight());
+        dstRect.set(x, y, x + w, y + h);
+        c.drawBitmap(b, srcRect, dstRect, p);
     }
 
     private void blitTile(Canvas c, String key, float x, float y, float w, float h) {
         Bitmap b = sprites.get(key);
         if (b == null) return;
-        paint.reset();
-        paint.setAntiAlias(true);
-        paint.setFilterBitmap(true);
         float curX = x;
         float endX = x + w;
         float bW = b.getWidth();
         float bH = b.getHeight();
         while (curX < endX) {
             float drawW = Math.min(bW, endX - curX);
-            Rect src = new Rect(0, 0, (int) drawW, (int) bH);
-            RectF dst = new RectF(curX, y, curX + drawW, y + h);
-            c.drawBitmap(b, src, dst, paint);
+            srcRect.set(0, 0, (int) drawW, (int) bH);
+            dstRect.set(curX, y, curX + drawW, y + h);
+            c.drawBitmap(b, srcRect, dstRect, bitmapPaint);
             curX += drawW;
         }
     }
@@ -1022,17 +1020,19 @@ public final class GameView extends View {
                 float ny = dx / len;
                 if (ny > 0) { nx = -nx; ny = -ny; }
 
-                // Elastic impulse calculation:
-                // Small / strong trampolines (len <= 150f): massive rocket rebound!
-                // Normal trampolines (150f < len <= 280f): standard bounce
-                // Long trampolines (280f < len <= 420f): high sag, weak bounce
+                // Elastic reflection formula matching libApplicationMain.so:
+                // v' = v - 2(v . n)n with restitution e = 0.80 and tangential damping 0.94
+                float dot = seedVx * nx + seedVy * ny;
+                float rx = seedVx - 2f * dot * nx;
+                float ry = seedVy - 2f * dot * ny;
+
                 float bouncePower;
                 String popupText = null;
                 int popupColor = 0xffffdd44;
 
                 if (t.isStrong) {
                     consecutiveBounces += 2;
-                    bouncePower = 860f + Math.min(180f, consecutiveBounces * 25f);
+                    bouncePower = 860f + Math.min(200f, consecutiveBounces * 25f);
                     playSfx("spring_01pang.ogg", 1.0f);
                     playSfx("mega_jump.ogg", 0.85f);
                     t.sagFactor = 0.35f;
@@ -1041,7 +1041,7 @@ public final class GameView extends View {
                     emitBounceStars(seedX, seedY);
                 } else if (t.length <= 280f) {
                     consecutiveBounces++;
-                    bouncePower = 620f + Math.min(180f, consecutiveBounces * 20f);
+                    bouncePower = 640f + Math.min(180f, consecutiveBounces * 20f);
                     int bounceIndex = Math.min(6, consecutiveBounces);
                     playSfx("spring_0" + bounceIndex + ".ogg", 0.85f);
                     if (bounceIndex >= 3) {
@@ -1049,9 +1049,8 @@ public final class GameView extends View {
                     }
                     t.sagFactor = 1.0f;
                 } else {
-                    // Weak bounce for long trampolines
                     consecutiveBounces = 1;
-                    bouncePower = 440f;
+                    bouncePower = 450f;
                     playSfx("spring_01.ogg", 0.6f);
                     t.sagFactor = 1.8f;
                     popupText = "WEAK BOUNCE";
@@ -1059,11 +1058,12 @@ public final class GameView extends View {
                 }
 
                 if (rainbowExpires > clock) {
-                    bouncePower = 880f;
+                    bouncePower = 900f;
                 }
 
-                seedVx = Math.max(180f, seedVx * 0.9f + nx * 140f);
-                seedVy = ny * bouncePower;
+                // Blend elastic reflection with line normal impulse
+                seedVx = Math.max(180f, rx * 0.94f);
+                seedVy = Math.min(-bouncePower, ry * 0.80f + ny * bouncePower * 0.4f);
 
                 // Position seed safely above trampoline line along normal
                 float l2 = dx * dx + dy * dy;
@@ -1427,30 +1427,16 @@ public final class GameView extends View {
             if (sx < -80f || sx > W + 80f) continue;
 
             if (s.type == 0) {
-                // Spinning Animated Sun with modern high-res glow
-                if (sprites.containsKey("sun_modern")) {
-                    float pulse = 1.0f + (float) Math.sin(clock * 6f + s.x * 0.1f) * 0.08f;
-                    float sw = 64f * pulse;
-                    blit(c, "sun_modern", sx - sw * 0.5f, s.y - sw * 0.5f, sw, sw, 1.0f);
-                } else {
-                    blit(c, sunKey, sx - 32f, s.y - 32f, 64f, 64f, 1.0f);
-                }
+                // Authentic 9-frame spinning animated smiling sun coin
+                blit(c, sunKey, sx - 32f, s.y - 32f, 64f, 64f, 1.0f);
             } else if (s.type == 1) {
                 // Authentic Rainbow Arc Collectible
                 float bob = (float) Math.sin(clock * 4f + s.x * 0.05f) * 6f;
-                if (sprites.containsKey("rainbow_modern")) {
-                    blit(c, "rainbow_modern", sx - 42f, s.y - 32f + bob, 84f, 64f, 1.0f);
-                } else {
-                    blit(c, "rainbow", sx - 38f, s.y - 38f + bob, 76f, 76f, 1.0f);
-                }
+                blit(c, "rainbow", sx - 38f, s.y - 38f + bob, 76f, 76f, 1.0f);
             } else if (s.type == 2) {
                 // Authentic Shield Pickup
                 float bob = (float) Math.sin(clock * 3.5f + s.x * 0.05f) * 5f;
-                if (sprites.containsKey("item_shield_modern")) {
-                    blit(c, "item_shield_modern", sx - 35f, s.y - 35f + bob, 70f, 70f, 1.0f);
-                } else {
-                    blit(c, "item_shield", sx - 35f, s.y - 35f + bob, 70f, 70f, 1.0f);
-                }
+                blit(c, "item_shield", sx - 35f, s.y - 35f + bob, 70f, 70f, 1.0f);
             } else if (s.type == 3) {
                 // Gold Coin
                 blit(c, "coin", sx - 26f, s.y - 26f, 52f, 52f, 1.0f);
@@ -1663,12 +1649,12 @@ public final class GameView extends View {
         c.restore();
     }
 
-    // Dragging preview when finger drawing a trampoline
+    // Dragging preview when finger drawing a trampoline (Screen Space - zero drift)
     private void drawDragPreview(Canvas c) {
         if (!dragging) return;
-        float x1 = gestureStartX - cameraX;
+        float x1 = gestureStartX;
         float y1 = gestureStartY;
-        float x2 = gestureEndX - cameraX;
+        float x2 = gestureEndX;
         float y2 = gestureEndY;
 
         float len = dist(x1, y1, x2, y2);
@@ -1724,12 +1710,8 @@ public final class GameView extends View {
 
     // In-Game HUD using Authentic Bitmap Numbers
     private void drawHud(Canvas c) {
-        // Sunlight Count: sun_modern or scosun.png + num2
-        if (sprites.containsKey("sun_modern")) {
-            blit(c, "sun_modern", 20f, 14f, 52f, 52f, 1.0f);
-        } else {
-            blit(c, "scosun", 24f, 18f, 48f, 48f, 1.0f);
-        }
+        // Sunlight Count: Authentic scosun.png + num2
+        blit(c, "scosun", 24f, 18f, 48f, 48f, 1.0f);
         drawBitmapNumber(c, "num2", sunCount, 82f, 20f, Paint.Align.LEFT);
 
         // Distance / Score: num1
@@ -1823,16 +1805,12 @@ public final class GameView extends View {
         float playX = playBounds.centerX() - playW * 0.5f;
         float playY = playBounds.centerY() - playH * 0.5f;
 
-        if (sprites.containsKey("play_modern")) {
-            blit(c, "play_modern", playX, playY - 6f, playW, playH + 12f, 1.0f);
-        } else {
-            blit(c, "play", playX, playY, playW, playH, 1.0f);
-            // Authentic green sprout (index_leaf.png) attached to top-left curve of PLAY
-            float leafW = 96f, leafH = 74f;
-            float leafX = playX + 16f;
-            float leafY = playY - 36f;
-            blit(c, "index_leaf", leafX, leafY, leafW, leafH, 1.0f);
-        }
+        // Authentic 2012 wooden PLAY sign with green leaf sprout
+        blit(c, "play", playX, playY, playW, playH, 1.0f);
+        float leafW = 96f, leafH = 74f;
+        float leafX = playX + 16f;
+        float leafY = playY - 36f;
+        blit(c, "index_leaf", leafX, leafY, leafW, leafH, 1.0f);
 
         // High Score Record using authentic BitmapNumber (num5)
         if (highScore > 0) {
@@ -1905,15 +1883,11 @@ public final class GameView extends View {
 
     // Authentic Game Over Screen (GameOverView)
     private void drawGameOver(Canvas c) {
-        if (sprites.containsKey("underwater_wide")) {
-            blit(c, "underwater_wide", 0, 0, W, VIRTUAL_HEIGHT, 1.0f);
-        } else {
-            paint.reset();
-            // Full-bleed widescreen underwater linear gradient
-            paint.setShader(new LinearGradient(0, 0, 0, VIRTUAL_HEIGHT, 0xff2090cc, 0xff0e4668, Shader.TileMode.CLAMP));
-            c.drawRect(0, 0, W, VIRTUAL_HEIGHT, paint);
-            paint.setShader(null);
-        }
+        paint.reset();
+        // Full-bleed widescreen underwater linear gradient
+        paint.setShader(new LinearGradient(0, 0, 0, VIRTUAL_HEIGHT, 0xff2090cc, 0xff0e4668, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, W, VIRTUAL_HEIGHT, paint);
+        paint.setShader(null);
 
         int season = currentSeason();
         String goBg = "gameover_bg" + (season + 1);
@@ -1935,12 +1909,8 @@ public final class GameView extends View {
         }
         drawBitmapNumber(c, "num1", displayScore, centerX, 235f, Paint.Align.CENTER);
 
-        // Sun count & Best Record
-        if (sprites.containsKey("sun_modern")) {
-            blit(c, "sun_modern", centerX - 130f, 308f, 56f, 56f, 1.0f);
-        } else {
-            blit(c, "oversun", centerX - 130f, 310f, 58f, 56f, 1.0f);
-        }
+        // Sun count & Best Record (authentic oversun.png)
+        blit(c, "oversun", centerX - 130f, 310f, 58f, 56f, 1.0f);
         drawBitmapNumber(c, "num2", sunCount, centerX - 65f, 320f, Paint.Align.LEFT);
 
         blit(c, "top", centerX + 30f, 312f, 52f, 50f, 1.0f);
@@ -2039,9 +2009,9 @@ public final class GameView extends View {
         sprites.clear();
     }
 
-    private void updateGestureEnd(float worldX, float y) {
-        float dx = worldX - gestureStartX;
-        float dy = y - gestureStartY;
+    private void updateGestureEnd(float screenX, float screenY) {
+        float dx = screenX - gestureStartX;
+        float dy = screenY - gestureStartY;
         float len = (float) Math.hypot(dx, dy);
         if (len > 540f) {
             dx = dx * 540f / len;
@@ -2260,7 +2230,7 @@ public final class GameView extends View {
             return true;
         }
 
-        // In Gameplay: Drawing finger trampolines
+        // In Gameplay: Drawing finger trampolines (Screen Space with instantaneous response)
         if (state == STATE_PLAY) {
             // Check Pause button tap (top-right corner)
             if (action == MotionEvent.ACTION_DOWN && touchX >= W - 95f && touchY <= 85f) {
@@ -2273,15 +2243,15 @@ public final class GameView extends View {
             switch (action) {
                 case MotionEvent.ACTION_DOWN:
                     dragging = true;
-                    gestureStartX = worldX;
+                    gestureStartX = touchX;
                     gestureStartY = touchY;
-                    gestureEndX = worldX;
+                    gestureEndX = touchX;
                     gestureEndY = touchY;
                     return true;
 
                 case MotionEvent.ACTION_MOVE:
                     if (dragging) {
-                        updateGestureEnd(worldX, touchY);
+                        updateGestureEnd(touchX, touchY);
                     }
                     return true;
 
@@ -2289,15 +2259,18 @@ public final class GameView extends View {
                 case MotionEvent.ACTION_CANCEL:
                     if (dragging) {
                         dragging = false;
-                        updateGestureEnd(worldX, touchY);
+                        updateGestureEnd(touchX, touchY);
                         float len = dist(gestureStartX, gestureStartY, gestureEndX, gestureEndY);
                         if (len >= 32f) {
-                            // Ensure left-to-right order for consistency
-                            float x1 = gestureStartX, y1 = gestureStartY;
-                            float x2 = gestureEndX, y2 = gestureEndY;
+                            // Convert screen-space line coordinates to world coordinates at moment of release
+                            float x1 = gestureStartX + cameraX;
+                            float y1 = gestureStartY;
+                            float x2 = gestureEndX + cameraX;
+                            float y2 = gestureEndY;
                             if (x1 > x2) {
-                                x1 = gestureEndX; y1 = gestureEndY;
-                                x2 = gestureStartX; y2 = gestureStartY;
+                                float tx = x1; float ty = y1;
+                                x1 = x2; y1 = y2;
+                                x2 = tx; y2 = ty;
                             }
                             trampolines.add(new Trampoline(x1, y1, x2, y2, currentBoardStyle));
                             playSfx("bounce.ogg", 0.45f);
