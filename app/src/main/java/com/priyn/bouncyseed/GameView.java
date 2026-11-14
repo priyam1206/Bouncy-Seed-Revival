@@ -120,6 +120,13 @@ public final class GameView extends View {
     private float shieldExpires = -1f;
     private float doubleStarExpires = -1f;
 
+    // Authentic Rainbow Ribbon Trail (Smooth flowing multi-colored path trailing behind Paul)
+    private static final int TRAIL_POINTS = 32;
+    private final float[] trailX = new float[TRAIL_POINTS];
+    private final float[] trailY = new float[TRAIL_POINTS];
+    private int trailCount = 0;
+    private float trailSampleTimer = 0f;
+
     // Score & Progression
     private int state = STATE_MENU;
     private int previousState = STATE_MENU;
@@ -157,12 +164,20 @@ public final class GameView extends View {
     // Trampoline Line Entity
     private static final class Trampoline {
         float ax, ay, bx, by;
+        float length;
+        boolean isStrong;    // length <= 150f (super high tension)
+        boolean isWarning;   // length > 420f (near breaking point)
         float life = 6.0f;
         int style;
         float sagFactor = 0f; // 0 to 1 for bounce rebound animation
+        boolean broken = false;
+
         Trampoline(float x1, float y1, float x2, float y2, int style) {
             ax = x1; ay = y1; bx = x2; by = y2;
             this.style = style;
+            this.length = (float) Math.hypot(x2 - x1, y2 - y1);
+            this.isStrong = (length <= 150f);
+            this.isWarning = (length > 420f);
         }
     }
 
@@ -322,6 +337,8 @@ public final class GameView extends View {
         String[] keys = {
             "hero", "hero_bg", "hero_mike_bg", "hero_style1_bg", "hero_style2_bg", "hero_leaf",
             "hair1", "hair2", "hair3",
+            "bga0", "bgb0", "bgc0", "bgd0",
+            "rainbow", "item_shield", "item_rush", "item_x2", "item_balloon",
             "bga3", "bgb3", "bgc3", "bgd1", "bgd2",
             "bga_cloud", "bgb_cloud", "bgc_cloud", "bgd_cloud",
             "bga_river", "bgb_river", "bgc_river2", "bgd_river",
@@ -670,16 +687,21 @@ public final class GameView extends View {
     }
 
     private void spawnEntities() {
+        if (farthestPickup < 500f && sunlights.isEmpty()) {
+            // Guaranteed early authentic rainbow collectible for testing and thrill!
+            sunlights.add(new Sunlight(360f, 210f, 1));
+        }
+
         // Collectibles (Sun, Coins, Rainbow, Shield, Double Star)
         while (farthestPickup < cameraX + W + 650f) {
             farthestPickup += 140f + random.nextFloat() * 110f;
             float py = 120f + random.nextFloat() * 320f;
             float roll = random.nextFloat();
             int type = 0; // standard sun
-            if (roll < 0.05f) type = 1;      // Rainbow Rush
-            else if (roll < 0.09f) type = 2; // Shield
-            else if (roll < 0.22f) type = 3; // Gold Coin (+75 pts)
-            else if (roll < 0.27f) type = 4; // Double Star
+            if (roll < 0.12f) type = 1;      // Rainbow Rush
+            else if (roll < 0.22f) type = 2; // Shield
+            else if (roll < 0.35f) type = 3; // Gold Coin (+75 pts)
+            else if (roll < 0.45f) type = 4; // Double Star
             sunlights.add(new Sunlight(farthestPickup, py, type));
         }
 
@@ -782,12 +804,45 @@ public final class GameView extends View {
 
         // Airborne air drag & forward drive
         float targetVx = 250f + Math.min(220f, score * 0.05f);
-        if (rainbowExpires > clock) targetVx = 560f;
-        seedVx = approach(seedVx, targetVx, 120f * dt);
+        if (rainbowExpires > clock) {
+            targetVx = 620f;
+            if (seedVy > -120f) {
+                seedVy = approach(seedVy, -140f, 600f * dt);
+            }
+        }
+        seedVx = approach(seedVx, targetVx, 160f * dt);
 
         // Position integrate
         seedX += seedVx * dt;
         seedY += seedVy * dt;
+
+        // Record trail history for flowing rainbow ribbon
+        if (rainbowExpires > clock) {
+            trailSampleTimer += dt;
+            if (trailSampleTimer >= 0.012f || trailCount == 0) {
+                trailSampleTimer = 0f;
+                if (trailCount < TRAIL_POINTS) {
+                    trailX[trailCount] = seedX;
+                    trailY[trailCount] = seedY;
+                    trailCount++;
+                } else {
+                    System.arraycopy(trailX, 1, trailX, 0, TRAIL_POINTS - 1);
+                    System.arraycopy(trailY, 1, trailY, 0, TRAIL_POINTS - 1);
+                    trailX[TRAIL_POINTS - 1] = seedX;
+                    trailY[TRAIL_POINTS - 1] = seedY;
+                }
+            }
+        } else {
+            if (trailCount > 0) {
+                trailSampleTimer += dt;
+                if (trailSampleTimer >= 0.02f) {
+                    trailSampleTimer = 0f;
+                    System.arraycopy(trailX, 1, trailX, 0, trailCount - 1);
+                    System.arraycopy(trailY, 1, trailY, 0, trailCount - 1);
+                    trailCount--;
+                }
+            }
+        }
 
         // Rotation follows velocity vector smoothly
         float targetRot = (float) Math.toDegrees(Math.atan2(seedVy, seedVx)) * 0.5f;
@@ -877,8 +932,10 @@ public final class GameView extends View {
 
     private void checkCollisions() {
         // 1. Trampoline collisions
-        for (Trampoline t : trampolines) {
-            if (t.life <= 0.1f) continue;
+        Iterator<Trampoline> itTramp = trampolines.iterator();
+        while (itTramp.hasNext()) {
+            Trampoline t = itTramp.next();
+            if (t.broken || t.life <= 0.1f) continue;
             // Check collision with line segment and swept segment
             float dist = lineSegDist(seedX, seedY, t.ax, t.ay, t.bx, t.by);
             boolean hit = (dist < SEED_RADIUS + 12f) || segmentsIntersect(oldSeedX, oldSeedY, seedX, seedY, t.ax, t.ay, t.bx, t.by);
@@ -889,23 +946,79 @@ public final class GameView extends View {
                 float len = (float) Math.hypot(dx, dy);
                 if (len < 1f) continue;
 
+                // Check for LINE BREAKAGE on overstretched lines:
+                // If length > 420f OR (length > 340f and falling fast seedVy > 520f)
+                boolean breaks = (t.length > 420f) || (t.length > 340f && seedVy > 520f);
+                if (breaks) {
+                    t.broken = true;
+                    playSfx("icebreak.ogg", 1.0f);
+                    triggerHaptic(45);
+
+                    // Burst of splinter shards along the broken line
+                    for (int p = 0; p < 14; p++) {
+                        float frac = (float) p / 14f;
+                        float px = t.ax + frac * dx;
+                        float py = t.ay + frac * dy;
+                        particles.add(new Particle(
+                            px, py,
+                            (random.nextFloat() - 0.5f) * 180f,
+                            (random.nextFloat() - 0.5f) * 140f + 70f,
+                            0.65f, 0xffeebb88, 18f, "ice",
+                            (random.nextFloat() - 0.5f) * 360f
+                        ));
+                    }
+
+                    // Line snaps! Seed plunges downward through the break!
+                    scorePopups.add(new ScorePopup(seedX - cameraX, seedY - 30f, "LINE BROKE!", 0xffff3333));
+                    consecutiveBounces = 0;
+                    itTramp.remove();
+                    break;
+                }
+
                 // Normal pointing upwards
                 float nx = -dy / len;
                 float ny = dx / len;
                 if (ny > 0) { nx = -nx; ny = -ny; }
 
-                // Elastic impulse with combo escalation
-                consecutiveBounces++;
-                int bounceIndex = Math.min(6, consecutiveBounces);
-                String soundFile = "spring_0" + bounceIndex + ".ogg";
-                playSfx(soundFile, 0.85f);
-                if (bounceIndex >= 3) {
-                    playSfx("spring_0" + bounceIndex + "pang.ogg", 0.6f);
+                // Elastic impulse calculation:
+                // Small / strong trampolines (len <= 150f): massive rocket rebound!
+                // Normal trampolines (150f < len <= 280f): standard bounce
+                // Long trampolines (280f < len <= 420f): high sag, weak bounce
+                float bouncePower;
+                String popupText = null;
+                int popupColor = 0xffffdd44;
+
+                if (t.isStrong) {
+                    consecutiveBounces += 2;
+                    bouncePower = 860f + Math.min(180f, consecutiveBounces * 25f);
+                    playSfx("spring_01pang.ogg", 1.0f);
+                    playSfx("mega_jump.ogg", 0.85f);
+                    t.sagFactor = 0.35f;
+                    popupText = "PERFECT BOUNCE!";
+                    popupColor = 0xffffd700;
+                    emitBounceStars(seedX, seedY);
+                } else if (t.length <= 280f) {
+                    consecutiveBounces++;
+                    bouncePower = 620f + Math.min(180f, consecutiveBounces * 20f);
+                    int bounceIndex = Math.min(6, consecutiveBounces);
+                    playSfx("spring_0" + bounceIndex + ".ogg", 0.85f);
+                    if (bounceIndex >= 3) {
+                        playSfx("spring_0" + bounceIndex + "pang.ogg", 0.6f);
+                    }
+                    t.sagFactor = 1.0f;
+                } else {
+                    // Weak bounce for long trampolines
+                    consecutiveBounces = 1;
+                    bouncePower = 440f;
+                    playSfx("spring_01.ogg", 0.6f);
+                    t.sagFactor = 1.8f;
+                    popupText = "WEAK BOUNCE";
+                    popupColor = 0xffbbbbbb;
                 }
 
-                // Bounce impulse
-                float bouncePower = 580f + Math.min(220f, consecutiveBounces * 20f);
-                if (rainbowExpires > clock) bouncePower = 780f;
+                if (rainbowExpires > clock) {
+                    bouncePower = 880f;
+                }
 
                 seedVx = Math.max(180f, seedVx * 0.9f + nx * 140f);
                 seedVy = ny * bouncePower;
@@ -924,14 +1037,15 @@ public final class GameView extends View {
 
                 // Authentic LineEffect: emit seasonal particles along the line
                 emitLineFlakes(t);
-
-                // Authentic bounceParticle: radial burst of stars
                 emitBounceStars(seedX, seedY);
 
                 // Score for successful bounce
-                int pts = 50 * consecutiveBounces;
+                int pts = 50 * consecutiveBounces + (t.isStrong ? 150 : 0);
                 score += pts;
-                scorePopups.add(new ScorePopup(seedX - cameraX, seedY - 40f, "+" + pts, 0xffffdd44));
+                if (popupText != null) {
+                    scorePopups.add(new ScorePopup(seedX - cameraX, seedY - 55f, popupText, popupColor));
+                }
+                scorePopups.add(new ScorePopup(seedX - cameraX, seedY - 25f, "+" + pts, 0xffffdd44));
                 break;
             }
         }
@@ -1129,6 +1243,8 @@ public final class GameView extends View {
         rainbowExpires = -1f;
         shieldExpires = -1f;
         doubleStarExpires = -1f;
+        trailCount = 0;
+        trailSampleTimer = 0f;
         farthestPickup = 200f;
         farthestHazard = 550f;
         farthestDecor = 220f;
@@ -1247,13 +1363,17 @@ public final class GameView extends View {
 
             // Trampoline line textured bar
             String lineKey = "board" + (t.style + 1) + "_line";
-            blit(c, lineKey, 0, -18f + t.sagFactor * 8f, len, 36f, alpha);
+            float sagY = -18f + t.sagFactor * (t.length > 280f ? 16f : 8f);
+            blit(c, lineKey, 0, sagY, len, 36f, alpha);
 
             c.restore();
 
-            // End knobs (board_dot.png)
-            blit(c, "board_dot", x1 - 18f, y1 - 18f, 36f, 36f, alpha);
-            blit(c, "board_dot", x2 - 18f, y2 - 18f, 36f, 36f, alpha);
+            // End knobs (board_dot or board_dot_strong)
+            String dotKey = t.isStrong ? "board_dot_strong" : "board_dot";
+            float dotSize = t.isStrong ? 40f : 36f;
+            float dotOff = dotSize * 0.5f;
+            blit(c, dotKey, x1 - dotOff, y1 - dotOff, dotSize, dotSize, alpha);
+            blit(c, dotKey, x2 - dotOff, y2 - dotOff, dotSize, dotSize, alpha);
         }
 
         // 2. Collectibles (Sun, Coins, Rainbow, Shield, Double Star)
@@ -1268,18 +1388,20 @@ public final class GameView extends View {
                 // Spinning Animated Sun
                 blit(c, sunKey, sx - 32f, s.y - 32f, 64f, 64f, 1.0f);
             } else if (s.type == 1) {
-                // Rainbow Power-up
-                blit(c, sunKey, sx - 36f, s.y - 36f, 72f, 72f, 1.0f);
-                blit(c, "star2", sx - 24f, s.y - 24f, 48f, 48f, 0.9f);
+                // Authentic Rainbow Arc Collectible
+                float bob = (float) Math.sin(clock * 4f + s.x * 0.05f) * 6f;
+                blit(c, "rainbow", sx - 38f, s.y - 38f + bob, 76f, 76f, 1.0f);
             } else if (s.type == 2) {
-                // Shield Pickup
-                blit(c, "shield", sx - 34f, s.y - 34f, 68f, 68f, 0.95f);
+                // Authentic Shield Pickup
+                float bob = (float) Math.sin(clock * 3.5f + s.x * 0.05f) * 5f;
+                blit(c, "item_shield", sx - 35f, s.y - 35f + bob, 70f, 70f, 1.0f);
             } else if (s.type == 3) {
                 // Gold Coin
                 blit(c, "coin", sx - 26f, s.y - 26f, 52f, 52f, 1.0f);
             } else if (s.type == 4) {
-                // Double Star
-                blit(c, "star", sx - 30f, s.y - 30f, 60f, 60f, 1.0f);
+                // Authentic 2X Multiplier
+                float bob = (float) Math.sin(clock * 3.5f + s.x * 0.05f) * 5f;
+                blit(c, "item_x2", sx - 35f, s.y - 35f + bob, 70f, 70f, 1.0f);
             }
         }
 
@@ -1355,32 +1477,51 @@ public final class GameView extends View {
         }
     }
 
-    // Authentic Rainbow Trail behind Seed
+    // Authentic Flowing Rainbow Ribbon Trail trailing behind Paul
     private void drawRainbowTrail(Canvas c, float sx, float sy) {
-        if (rainbowExpires <= clock) return;
+        if (trailCount < 2) return;
 
         paint.reset();
         paint.setAntiAlias(true);
         paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeJoin(Paint.Join.ROUND);
 
-        for (int i = 0; i < RAINBOW_COLORS.length; i++) {
-            paint.setColor(RAINBOW_COLORS[i]);
-            paint.setStrokeWidth(5f);
-            float offY = (i - 2.5f) * 4f;
+        for (int band = 0; band < RAINBOW_COLORS.length; band++) {
+            paint.setColor(RAINBOW_COLORS[band]);
+            paint.setStrokeWidth(5.5f);
+
+            float bandOffset = (band - 2.5f) * 4.5f;
 
             Path path = new Path();
-            path.moveTo(sx - 150f, sy + offY + (float) Math.sin(clock * 12f) * 8f);
-            path.quadTo(sx - 75f, sy + offY - 6f, sx, sy + offY);
+            float startScreenX = trailX[0] - cameraX;
+            float startScreenY = trailY[0] + bandOffset;
+            path.moveTo(startScreenX, startScreenY);
+
+            for (int i = 1; i < trailCount; i++) {
+                float prevX = trailX[i - 1] - cameraX;
+                float prevY = trailY[i - 1] + bandOffset;
+                float currX = trailX[i] - cameraX;
+                float currY = trailY[i] + bandOffset;
+                float midX = (prevX + currX) * 0.5f;
+                float midY = (prevY + currY) * 0.5f;
+                path.quadTo(prevX, prevY, midX, midY);
+            }
+            path.lineTo(sx - 15f, sy + bandOffset);
+
             c.drawPath(path, paint);
         }
 
-        // Sparkling rainbow stars
-        if (random.nextFloat() < 0.6f) {
+        // Sparkling rainbow stars bursting along the trail
+        if (random.nextFloat() < 0.75f) {
+            int idx = random.nextInt(Math.max(1, trailCount));
+            float emitX = (trailCount > 0 && idx < trailCount) ? trailX[idx] : seedX;
+            float emitY = (trailCount > 0 && idx < trailCount) ? trailY[idx] : seedY;
             particles.add(new Particle(
-                seedX - 30f + (random.nextFloat() - 0.5f) * 20f,
-                seedY + (random.nextFloat() - 0.5f) * 24f,
-                -120f - random.nextFloat() * 80f, (random.nextFloat() - 0.5f) * 60f,
-                0.5f, 0xffffffff, 26f, "star", (random.nextFloat() - 0.5f) * 240f
+                emitX - 10f + (random.nextFloat() - 0.5f) * 20f,
+                emitY + (random.nextFloat() - 0.5f) * 24f,
+                -100f - random.nextFloat() * 60f, (random.nextFloat() - 0.5f) * 50f,
+                0.55f, 0xffffffff, 28f, "star", (random.nextFloat() - 0.5f) * 260f
             ));
         }
     }
@@ -1484,15 +1625,45 @@ public final class GameView extends View {
         float dx = x2 - x1, dy = y2 - y1;
         float angle = (float) Math.toDegrees(Math.atan2(dy, dx));
 
+        boolean isStrong = (len <= 150f);
+        boolean isWarning = (len > 420f);
+
         c.save();
         c.translate(x1, y1);
         c.rotate(angle);
         String lineKey = "board" + (currentBoardStyle + 1) + "_line";
-        blit(c, lineKey, 0, -18f, len, 36f, 0.85f);
+        float alpha = isWarning ? (0.6f + (float) Math.sin(clock * 16f) * 0.35f) : 0.88f;
+        blit(c, lineKey, 0, -18f, len, 36f, alpha);
         c.restore();
 
-        blit(c, "board_dot", x1 - 18f, y1 - 18f, 36f, 36f, 0.85f);
-        blit(c, "board_dot", x2 - 18f, y2 - 18f, 36f, 36f, 0.85f);
+        // End caps
+        String dotKey = isStrong ? "board_dot_strong" : "board_dot";
+        float dotSize = isStrong ? 40f : 36f;
+        float dotOff = dotSize * 0.5f;
+        blit(c, dotKey, x1 - dotOff, y1 - dotOff, dotSize, dotSize, 0.95f);
+        blit(c, dotKey, x2 - dotOff, y2 - dotOff, dotSize, dotSize, 0.95f);
+
+        // Visual feedback hints
+        paint.reset();
+        paint.setAntiAlias(true);
+        paint.setTypeface(gameFont);
+        paint.setTextAlign(Paint.Align.CENTER);
+        float midX = (x1 + x2) * 0.5f;
+        float midY = (y1 + y2) * 0.5f - 24f;
+
+        if (isStrong) {
+            paint.setTextSize(20f);
+            paint.setColor(0xffffdd33);
+            paint.setShadowLayer(4f, 0, 2f, 0xbb000000);
+            c.drawText("SUPER BOUNCE!", midX, midY, paint);
+            paint.clearShadowLayer();
+        } else if (isWarning) {
+            paint.setTextSize(20f);
+            paint.setColor(0xffff3333);
+            paint.setShadowLayer(4f, 0, 2f, 0xbb000000);
+            c.drawText("OVERSTRETCHED - MAY BREAK!", midX, midY, paint);
+            paint.clearShadowLayer();
+        }
     }
 
     // In-Game HUD using Authentic Bitmap Numbers
@@ -1557,9 +1728,30 @@ public final class GameView extends View {
 
     // Authentic Start Menu Screen
     private void drawMenu(Canvas c) {
-        float centerX = W * 0.5f;
+        // Authentic full-bleed rolling hills background (bga0.png)
+        float bgW = Math.max(W, 960f);
+        float bgH = VIRTUAL_HEIGHT;
+        float bgX = (W - bgW) * 0.5f;
+        blit(c, "bga0", bgX, 0, bgW, bgH, 1.0f);
 
-        // Big Authentic PLAY Button (centered vertically at 48% height)
+        float centerX = W * 0.5f;
+        float footerY = VIRTUAL_HEIGHT - 86f;
+
+        // Authentic cottages from bga3 atlas
+        Bitmap bga3 = sprites.get("bga3");
+        if (bga3 != null) {
+            // Left blue cottage (y=[532, 742], x=[6, 244])
+            Rect srcLeft = new Rect(6, 532, 244, 742);
+            RectF dstLeft = new RectF(15f, footerY - 185f, 15f + 210f, footerY - 5f);
+            c.drawBitmap(bga3, srcLeft, dstLeft, paint);
+
+            // Right red cottage (y=[52, 248], x=[3, 250])
+            Rect srcRight = new Rect(3, 52, 250, 248);
+            RectF dstRight = new RectF(W - 225f, footerY - 175f, W - 15f, footerY - 5f);
+            c.drawBitmap(bga3, srcRight, dstRight, paint);
+        }
+
+        // Big Authentic PLAY Button (centered vertically at 46% height)
         RectF playBounds = getPlayButtonBounds();
         float pulse = 1.0f + (float) Math.sin(clock * 3.5f) * 0.035f;
         float playW = playBounds.width() * pulse;
@@ -1568,20 +1760,19 @@ public final class GameView extends View {
         float playY = playBounds.centerY() - playH * 0.5f;
         blit(c, "play", playX, playY, playW, playH, 1.0f);
 
-        // Authentic Title Logo (floating naturally right above PLAY)
-        float logoW = Math.min(W * 0.65f, 480f);
-        float logoH = logoW * (470f / 670f);
-        float logoY = playBounds.top - logoH + 20f + (float) Math.sin(clock * 2.5f) * 6f;
-        blit(c, "title_logo", centerX - logoW * 0.5f, logoY, logoW, logoH, 1.0f);
+        // Authentic green sprout (index_leaf.png) attached to top-left curve of PLAY
+        float leafW = 84f, leafH = 82f;
+        float leafX = playX + playW * 0.16f - 30f;
+        float leafY = playY - 26f;
+        blit(c, "index_leaf", leafX, leafY, leafW, leafH, 1.0f);
 
         // High Score Record using authentic BitmapNumber (num5)
         if (highScore > 0) {
-            float recordY = playBounds.bottom + 12f;
+            float recordY = playBounds.bottom + 16f;
             drawBitmapNumber(c, "num5", highScore, centerX, recordY, Paint.Align.CENTER);
         }
 
         // Authentic Footer Bar (footer.png 960x86 across bottom)
-        float footerY = VIRTUAL_HEIGHT - 86f;
         blitTile(c, "footer", 0, footerY, W, 86f);
 
         // Authentic Footer Buttons
@@ -1646,46 +1837,47 @@ public final class GameView extends View {
 
     // Authentic Game Over Screen (GameOverView)
     private void drawGameOver(Canvas c) {
-        // Darkened backdrop
         paint.reset();
-        paint.setColor(0x99000c18);
+        // Full-bleed widescreen underwater linear gradient
+        paint.setShader(new LinearGradient(0, 0, 0, VIRTUAL_HEIGHT, 0xff2090cc, 0xff0e4668, Shader.TileMode.CLAMP));
         c.drawRect(0, 0, W, VIRTUAL_HEIGHT, paint);
+        paint.setShader(null);
 
         int season = currentSeason();
         String goBg = "gameover_bg" + (season + 1);
         float centerX = W * 0.5f;
 
-        // Seasonal backdrop illustration
-        blit(c, goBg, centerX - 240f, 50f, 480f, 540f, 0.95f);
+        // Seasonal backdrop illustration centered (519x640)
+        blit(c, goBg, centerX - 260f, 0, 520f, VIRTUAL_HEIGHT, 1.0f);
 
-        // Hanging signpost on the left
+        // Cleaned hanging signpost on the left (metal rod and red arrow, no green artifacts)
         blit(c, "gameover_sign", centerX - 270f, 0, 150f, 480f, 1.0f);
 
         // Title: gameover_title.png
-        blit(c, "gameover_title", centerX - 210f, 55f, 420f, 168f, 1.0f);
+        blit(c, "gameover_title", centerX - 210f, 45f, 420f, 168f, 1.0f);
 
         // Score tallying
         if (displayScore < score) {
             displayScore += Math.max(1, (score - displayScore) / 4);
             playSfx("score_tick.ogg", 0.35f);
         }
-        drawBitmapNumber(c, "num1", displayScore, centerX, 245f, Paint.Align.CENTER);
+        drawBitmapNumber(c, "num1", displayScore, centerX, 235f, Paint.Align.CENTER);
 
         // Sun count & Best Record
-        blit(c, "oversun", centerX - 130f, 320f, 58f, 56f, 1.0f);
-        drawBitmapNumber(c, "num2", sunCount, centerX - 65f, 330f, Paint.Align.LEFT);
+        blit(c, "oversun", centerX - 130f, 310f, 58f, 56f, 1.0f);
+        drawBitmapNumber(c, "num2", sunCount, centerX - 65f, 320f, Paint.Align.LEFT);
 
-        blit(c, "top", centerX + 30f, 322f, 52f, 50f, 1.0f);
-        drawBitmapNumber(c, "num3", highScore, centerX + 90f, 332f, Paint.Align.LEFT);
+        blit(c, "top", centerX + 30f, 312f, 52f, 50f, 1.0f);
+        drawBitmapNumber(c, "num3", highScore, centerX + 90f, 322f, Paint.Align.LEFT);
 
         // Grass hill along bottom
-        blit(c, "gameover_grass", centerX - 320f, VIRTUAL_HEIGHT - 120f, 640f, 120f, 1.0f);
+        blitTile(c, "gameover_grass", 0, VIRTUAL_HEIGHT - 120f, W, 120f);
 
         // Buttons
-        blit(c, "gameover_retry", centerX - 150f, 410f, 130f, 130f, 1.0f);
-        blit(c, "gameover_menu", centerX + 20f, 410f, 130f, 125f, 1.0f);
-        blit(c, "gameover_rank", centerX - 250f, 520f, 105f, 85f, 1.0f);
-        blit(c, "gameover_pack", centerX + 145f, 520f, 100f, 85f, 1.0f);
+        blit(c, "gameover_retry", centerX - 150f, 400f, 130f, 130f, 1.0f);
+        blit(c, "gameover_menu", centerX + 20f, 400f, 130f, 125f, 1.0f);
+        blit(c, "gameover_rank", centerX - 250f, 515f, 105f, 85f, 1.0f);
+        blit(c, "gameover_pack", centerX + 145f, 515f, 100f, 85f, 1.0f);
     }
 
     @Override
@@ -1706,25 +1898,32 @@ public final class GameView extends View {
         canvas.save();
         canvas.scale(scale, scale);
 
-        drawSky(canvas);
-        drawScenery(canvas);
-
-        if (state == STATE_PLAY || state == STATE_PAUSE || state == STATE_GAME_OVER) {
+        if (state == STATE_MENU) {
+            drawMenu(canvas);
+        } else if (state == STATE_GAME_OVER) {
+            drawGameOver(canvas);
+        } else if (state == STATE_SHOP) {
+            if (previousState == STATE_GAME_OVER) {
+                drawGameOver(canvas);
+            } else if (previousState == STATE_MENU) {
+                drawMenu(canvas);
+            } else {
+                drawSky(canvas);
+                drawScenery(canvas);
+            }
+            drawShop(canvas);
+        } else {
+            // STATE_PLAY or STATE_PAUSE
+            drawSky(canvas);
+            drawScenery(canvas);
             drawEntities(canvas);
             drawRainbowTrail(canvas, seedX - cameraX, seedY);
             drawSeed(canvas, seedX - cameraX, seedY, 78f);
             drawDragPreview(canvas);
             drawHud(canvas);
-        }
-
-        if (state == STATE_MENU) {
-            drawMenu(canvas);
-        } else if (state == STATE_SHOP) {
-            drawShop(canvas);
-        } else if (state == STATE_PAUSE) {
-            drawPause(canvas);
-        } else if (state == STATE_GAME_OVER) {
-            drawGameOver(canvas);
+            if (state == STATE_PAUSE) {
+                drawPause(canvas);
+            }
         }
 
         canvas.restore();
@@ -1768,9 +1967,9 @@ public final class GameView extends View {
         float dx = worldX - gestureStartX;
         float dy = y - gestureStartY;
         float len = (float) Math.hypot(dx, dy);
-        if (len > 280f) {
-            dx = dx * 280f / len;
-            dy = dy * 280f / len;
+        if (len > 540f) {
+            dx = dx * 540f / len;
+            dy = dy * 540f / len;
         }
         gestureEndX = gestureStartX + dx;
         gestureEndY = gestureStartY + dy;
